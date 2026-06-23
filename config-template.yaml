@@ -1,0 +1,57 @@
+# CineSync configuration
+# Everything here is read once per notebook run via src/config_loader.py
+
+project:
+  name: cinesync
+  version: 0.1.0
+
+people:
+  - id: person_1
+    name: "Name 1"
+  - id: person_2
+    name: "Name 2"
+  # - id: person_3
+  #   name: "Add more rows here for additional group members"
+
+embeddings:
+  model: "all-MiniLM-L6-v2"
+  # IMPORTANT: if you ever swap this model, old and new embeddings are
+  # NOT comparable. Re-run Phase 2 for every title if you change this,
+  # or keep two columns (old/new) during a transition.
+
+languages_of_interest:
+  - en  # English
+  - ko  # Korean
+  - ja  # Japanese
+  - hi  # Hindi
+  - ur  # Udru
+  - fr  # French
+  - es  # Spanish
+  - fa  # Persian
+  - sv  # Swedish
+  - no  # Norwegian
+  - de  # German
+  - id  # Indonesian
+  - ms  # Malay
+  - bn  # Bengali
+
+apis:
+  tmdb_api_key: "PUT_YOUR_KEY_HERE"
+  omdb_api_key: "PUT_YOUR_KEY_HERE"
+  reddit:
+    client_id: "PUT_YOUR_KEY_HERE"
+    client_secret: "PUT_YOUR_KEY_HERE"
+    user_agent: "cinesync/0.1 by your_reddit_username"
+
+thresholds:
+  # Below this many ratings, Phase 4 skips that person's personal
+  # model and falls back to Phase 3 cluster-based suggestions instead.
+  min_ratings_for_personal_model: 30
+
+# Phase 8. Normalized to 0-100 per source before weighting; weight is
+# redistributed proportionally if a source is missing for a title.
+critic_score_weights:
+  letterboxd_rating: 0.35
+  rt_critic: 0.35
+  rt_audience: 0.15
+  imdb_rating: 0.15

@@ -1,0 +1,16 @@
+[project]
+name = "cinesync"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "beautifulsoup4>=4.15.0",
+    "ipykernel>=7.3.0",
+    "numpy>=2.5.0",
+    "pandas>=3.0.3",
+    "plotly>=6.8.0",
+    "pyyaml>=6.0.3",
+    "requests>=2.34.2",
+    "scikit-learn>=1.9.0",
+]

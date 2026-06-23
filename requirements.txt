@@ -1,0 +1,6 @@
+praw
+sentence-transformers
+umap-learn
+hdbscan
+lightgbm
+torch
