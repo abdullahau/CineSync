@@ -1,5 +1,8 @@
 config.yaml
 
+# Editor files
+.vscode
+
 # Python-generated files
 __pycache__/
 *.py[oc]
