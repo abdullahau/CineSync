@@ -1,4 +1,10 @@
+# Secrets
+.env
 config.yaml
+
+# Database
+data/*
+!data/.gitkeep
 
 # Editor files
 .vscode
@@ -10,6 +16,7 @@ build/
 dist/
 wheels/
 *.egg-info
+.ruff_cache
 
 # Virtual environments
 .venv
