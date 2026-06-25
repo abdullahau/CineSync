@@ -16,6 +16,16 @@ dependencies = [
     "scikit-learn>=1.9.0",
 ]
 
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.scripts]
+cinesync-init-db = "cinesync.init_db:init_db"
+
 [tool.ruff]
 line-length = 88
 

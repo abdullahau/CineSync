@@ -2,7 +2,7 @@ import json
 import os
 import requests
 from dotenv import load_dotenv
-from net import force_ipv4
+from cinesync.utils.net import force_ipv4
 
 load_dotenv(".env")
 force_ipv4()

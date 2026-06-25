@@ -10,11 +10,11 @@ after editing schema.sql).
 """
 
 import sqlite3
-from pathlib import Path
+from importlib.resources import files
+from cinesync.paths import DATA_DIR
 
-ROOT = Path(__file__).resolve().parent.parent
-SCHEMA_PATH = ROOT / "schema.sql"
-DB_PATH = ROOT / "data" / "cinesync.db"
+DB_PATH = DATA_DIR / "cinesync.db"
+SCHEMA_PATH = files("cinesync").joinpath("schema.sql")
 
 
 def init_db():
