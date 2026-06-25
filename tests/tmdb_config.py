@@ -16,5 +16,5 @@ headers = {
 
 response = requests.get(url, headers=headers)
 
-with open("tmdb_config.json", "w", encoding="utf-8") as file:
+with open("tests/tmdb_config.json", "w", encoding="utf-8") as file:
     json.dump(response.json(), file, indent=4)

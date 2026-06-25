@@ -27,7 +27,14 @@ CREATE TABLE titles (
     runtime_minutes    INTEGER,             -- movies: runtime; tv: avg episode runtime
     number_of_seasons  INTEGER,             -- null for movies
     status             TEXT,                -- 'Released', 'Ended', 'Returning Series', etc.
-    overview           TEXT,                -- synopsis -- source text for theme embeddings
+    imdb_id            TEXT,                -- from external_ids -- needed for OMDb critic scores
+    wikidata_id        TEXT,                -- from external_ids -- needed for the Wikipedia plot
+                                            -- lookup (wbgetentities by this id). Request both via
+                                            -- append_to_response=keywords,credits,external_ids
+    overview           TEXT,                -- TMDB's short synopsis
+    detailed_plot      TEXT,                -- longer Wikipedia "Plot" section, when available --
+                                             -- null for obscure titles; Phase 2 falls back to
+                                             -- `overview` + keywords for the embedding text in that case
     source             TEXT,                -- 'letterboxd_import' or 'tmdb_discover'
     date_added         TEXT DEFAULT (datetime('now'))
 );
@@ -54,6 +61,45 @@ CREATE TABLE title_credits (
     name     TEXT NOT NULL,
     "order"  INTEGER,
     PRIMARY KEY (title_id, role, name)
+);
+
+-- TMDB keyword tags -- short structured theme/topic labels (e.g.
+-- "surreal", "social commentary", "psychological", "found footage").
+-- Multi-valued per title, same junction pattern as genres. This is
+-- the most direct hit on the original "theme/style/topic" metadata
+-- goal -- richer signal than the one-line overview alone, and free
+-- via the same TMDB request (append_to_response=keywords). Note:
+-- TMDB's movie endpoint returns these under a "keywords" key, the TV
+-- endpoint under "results" -- same data, different key, branch on
+-- content_type when parsing.
+CREATE TABLE title_keywords (
+    title_id TEXT NOT NULL REFERENCES titles(title_id),
+    keyword  TEXT NOT NULL,
+    PRIMARY KEY (title_id, keyword)
+);
+
+-- Production companies. Separate from title_credits since companies
+-- aren't people and carry different fields (TMDB company id, origin
+-- country). Frequency-bucketed in Phase 2 just like cast -- most
+-- films list several minor co-production/finance entities alongside
+-- the one company that actually signals taste (e.g. A24, NEON).
+CREATE TABLE title_companies (
+    title_id       TEXT NOT NULL REFERENCES titles(title_id),
+    company_id     INTEGER,           -- TMDB company id
+    company_name   TEXT NOT NULL,
+    origin_country TEXT,
+    PRIMARY KEY (title_id, company_name)
+);
+
+-- Producer-tier credits (Producer, Executive Producer, Co-Producer,
+-- Supervising Producer, Consulting Producer, etc.) plus Director of
+-- Photography. Job is stored verbatim and not mapped to a fixed role
+CREATE TABLE title_crew_extra (
+    title_id   TEXT NOT NULL REFERENCES titles(title_id),
+    job        TEXT NOT NULL,      -- verbatim TMDB job title, e.g. 'Executive Producer'
+    name       TEXT NOT NULL,
+    department TEXT,               -- TMDB department, kept for reference/debugging
+    PRIMARY KEY (title_id, job, name)
 );
 
 -- Long format: one row per (person, title, rating) rather than one

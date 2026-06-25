@@ -9,11 +9,12 @@ Usage:
 """
 
 from pathlib import Path
-
 import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
-CONFIG_PATH = ROOT / "config.yaml"
+CONFIG_PATH = (
+    ROOT / "config.yaml"
+)  # TODO: ensure this confiq.yaml load imports the .env keys
 
 
 def load_config():
