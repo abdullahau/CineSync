@@ -100,8 +100,9 @@ WHERE rn = 1;
 CREATE TABLE external_scores (
     title_id    TEXT NOT NULL REFERENCES titles(title_id),
     source      TEXT NOT NULL CHECK (source IN
-                 ('letterboxd_rating','rt_critic','rt_audience','imdb_rating')),
+                 ('letterboxd_rating','rt_critic','rt_audience','imdb_rating','tmdb_rating')),
     score       REAL,             -- normalized to a 0-100 scale at write time
+    sample_size INTEGER,          -- nullable
     date_pulled TEXT DEFAULT (datetime('now')),
     PRIMARY KEY (title_id, source)
 );

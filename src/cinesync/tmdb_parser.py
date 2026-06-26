@@ -184,6 +184,22 @@ def _parse_crew_extra(data: dict) -> list[dict]:
     return deduped
 
 
+def _parse_tmdb_score(data: dict) -> dict | None:
+    """
+    Returns None when vote_count is 0
+    """
+    vote_count = data.get("vote_count") or 0
+    if vote_count == 0:
+        return None
+    return {
+        "source": "tmdb_rating",
+        "score": round(
+            data["vote_average"] * 10, 2
+        ),  # TMDB's 0-10 -> this table's 0-100 convention
+        "sample_size": vote_count,
+    }
+
+
 def parse_tmdb_response(
     data: dict, content_type: str, source: str = "tmdb_discover"
 ) -> dict:

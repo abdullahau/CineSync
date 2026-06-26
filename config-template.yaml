@@ -61,5 +61,6 @@ recency:
 critic_score_weights:
   letterboxd_rating: 0.35
   rt_critic: 0.35
-  rt_audience: 0.15
-  imdb_rating: 0.15
+  rt_audience: 0.10
+  imdb_rating: 0.10
+  tmdb_rating: 0.10
