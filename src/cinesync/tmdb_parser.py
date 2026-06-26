@@ -2,16 +2,14 @@
 Phase 1: parse a raw TMDB API response (movie or TV) into rows ready
 for the CineSync schema.
 
-Call TMDB like this for BOTH movie and TV -- identical parameter list,
-no branching needed at the request level:
+Call TMDB like this for BOTH movie and TV:
 
     Movie:  /movie/{id}?append_to_response=keywords,credits,external_ids
     TV:     /tv/{id}?append_to_response=keywords,credits,external_ids
 
-external_ids gives you imdb_id (for OMDb critic scores) and
+external_ids fetches both imdb_id (for OMDb critic scores) and
 wikidata_id (for the Wikipedia plot lookup -- query Wikidata's
-wbgetentities by this id directly, no SPARQL search needed) on both
-content types identically.
+wbgetentities by this id directly)
 
 Usage:
     from parse_tmdb import parse_tmdb_response
@@ -51,10 +49,6 @@ def _parse_title_row(data: dict, content_type: str, source: str) -> dict:
     elif content_type == "tv":
         name = data["name"]
         release_date = data.get("first_air_date")
-        # TV has no single "runtime" field. episode_run_time is often
-        # an empty list (as in the Severance payload) even for shows
-        # with real episodes -- fall back to the most recent aired
-        # episode's runtime when that happens.
         episode_run_time = data.get("episode_run_time") or []
         if episode_run_time:
             runtime_minutes = round(sum(episode_run_time) / len(episode_run_time))
@@ -67,8 +61,6 @@ def _parse_title_row(data: dict, content_type: str, source: str) -> dict:
 
     release_year = int(release_date[:4]) if release_date else None
 
-    # external_ids is identical in shape for movie and TV -- no
-    # branching needed here, unlike runtime/name above.
     external_ids = data.get("external_ids") or {}
 
     return {
@@ -90,13 +82,10 @@ def _parse_title_row(data: dict, content_type: str, source: str) -> dict:
 
 
 def _parse_genres(data: dict) -> list[str]:
-    # Identical shape for movie and TV -- no branching needed.
     return [g["name"] for g in data.get("genres", [])]
 
 
 def _parse_keywords(data: dict, content_type: str) -> list[str]:
-    # The one TMDB gotcha that bites everyone: movies nest keywords
-    # under "keywords", TV nests the identical data under "results".
     kw_block = data.get("keywords", {})
     if content_type == "movie":
         kw_list = kw_block.get("keywords", [])
@@ -106,8 +95,6 @@ def _parse_keywords(data: dict, content_type: str) -> list[str]:
 
 
 def _parse_companies(data: dict) -> list[dict]:
-    # company_id is the real identity (see title_companies in
-    # schema.sql) -- company_name is kept only as a display label.
     return [
         {"company_id": c.get("id"), "company_name": c["name"]}
         for c in data.get("production_companies", [])
@@ -119,15 +106,10 @@ def _parse_credits(data: dict, content_type: str) -> list[dict]:
 
     credits_block = data.get("credits", {})
 
-    # Cast -- "order" is billing order, used for top-N bucketing in Phase 2.
+    # Cast "order" is billing order
     for c in credits_block.get("cast", []):
         rows.append({"role": "cast", "name": c["name"], "order": c.get("order")})
 
-    # Crew -- IMPORTANT: match on "job" (this specific credit), never
-    # on "known_for_department" (this person's general career area).
-    # Real example from your data: Roberto Patino's known_for_department
-    # is "Writing", but his job on this title is "Producer" -- using
-    # known_for_department would have wrongly tagged him as a writer.
     for c in credits_block.get("crew", []):
         job = c.get("job")
         if job == "Director":
@@ -135,20 +117,10 @@ def _parse_credits(data: dict, content_type: str) -> list[dict]:
         elif job in WRITER_JOBS:
             rows.append({"role": "writer", "name": c["name"], "order": None})
 
-    # TV-only: created_by is the showrunner/creator credit, and is
-    # far more reliable for TV than crew job-title parsing -- TMDB's
-    # top-level TV credits are sparse on director/writer since those
-    # vary per episode rather than per series. It's expected and
-    # normal for a TV title to end up with zero director/writer rows
-    # here while still having a creator row -- that's not a bug, it's
-    # a consequence of storing TV at series level rather than per-episode.
     if content_type == "tv":
         for c in data.get("created_by", []):
             rows.append({"role": "creator", "name": c["name"], "order": None})
 
-    # A person can show up twice with overlapping job titles (e.g.
-    # "Story" and "Screenplay" both map to role='writer') -- dedupe
-    # on (role, name) since that's the table's primary key.
     seen = set()
     deduped = []
     for row in rows:
@@ -163,8 +135,7 @@ def _parse_crew_extra(data: dict) -> list[dict]:
     """
     Producer-tier credits (Producer, Executive Producer, Co-Producer,
     Supervising Producer, Consulting Producer, etc.) plus Director of
-    Photography. job is kept verbatim -- see title_crew_extra in
-    schema.sql for why this isn't collapsed into title_credits.
+    Photography.
     """
     rows = []
     for c in data.get("credits", {}).get("crew", []):
@@ -185,9 +156,6 @@ def _parse_crew_extra(data: dict) -> list[dict]:
 
 
 def _parse_tmdb_score(data: dict) -> dict | None:
-    """
-    Returns None when vote_count is 0
-    """
     vote_count = data.get("vote_count") or 0
     if vote_count == 0:
         return None
