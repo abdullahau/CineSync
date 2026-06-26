@@ -27,7 +27,8 @@ CREATE TABLE titles (
     overview           TEXT,                -- TMDB's short synopsis
     detailed_plot      TEXT,                -- longer Wikipedia "Plot" section, when available
     source             TEXT,                -- 'letterboxd_import' or 'tmdb_discover'
-    date_added         TEXT DEFAULT (datetime('now'))
+    date_added         TEXT DEFAULT (datetime('now')) -- immutable
+    last_refreshed     TEXT DEFAULT (datetime('now')) -- mutable -- when metadata was last verified/re-fetched.
 );
 
 -- Genres (titles 1:M title_genres)
@@ -105,6 +106,15 @@ CREATE TABLE external_scores (
     sample_size INTEGER,          -- nullable
     date_pulled TEXT DEFAULT (datetime('now')),
     PRIMARY KEY (title_id, source)
+);
+
+-- Popularity & mention time series
+CREATE TABLE title_buzz_snapshots (
+    title_id      TEXT NOT NULL REFERENCES titles(title_id),
+    source        TEXT NOT NULL CHECK (source IN ('tmdb_popularity','reddit_mentions')),
+    snapshot_date TEXT NOT NULL,
+    value         REAL NOT NULL,        -- TMDB popularity or reddit mentions
+    PRIMARY KEY (title_id, source, snapshot_date)
 );
 
 -- Tracks how a title entered the candidate pool -- which
