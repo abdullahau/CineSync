@@ -2,14 +2,16 @@
 Phase 1: parse a raw TMDB API response (movie or TV) into rows ready
 for the CineSync schema.
 
-Call TMDB like this for BOTH movie and TV
+Call TMDB like this for BOTH movie and TV -- identical parameter list,
+no branching needed at the request level:
 
     Movie:  /movie/{id}?append_to_response=keywords,credits,external_ids
     TV:     /tv/{id}?append_to_response=keywords,credits,external_ids
 
 external_ids gives you imdb_id (for OMDb critic scores) and
 wikidata_id (for the Wikipedia plot lookup -- query Wikidata's
-wbgetentities by this id directly)
+wbgetentities by this id directly, no SPARQL search needed) on both
+content types identically.
 
 Usage:
     from parse_tmdb import parse_tmdb_response
@@ -104,12 +106,10 @@ def _parse_keywords(data: dict, content_type: str) -> list[str]:
 
 
 def _parse_companies(data: dict) -> list[dict]:
+    # company_id is the real identity (see title_companies in
+    # schema.sql) -- company_name is kept only as a display label.
     return [
-        {
-            "company_id": c.get("id"),
-            "company_name": c["name"],
-            "origin_country": c.get("origin_country"),
-        }
+        {"company_id": c.get("id"), "company_name": c["name"]}
         for c in data.get("production_companies", [])
     ]
 

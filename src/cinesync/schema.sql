@@ -2,21 +2,16 @@
 -- CineSync database schema (SQLite)
 -- Phase 0: schema lock-in
 --
--- Run src/init_db.py to turn this file into data/cinesync.db
+-- Run `uv run cinesync-init-db` to create `data/cinesync.db`
 -- ============================================================
 
--- One row per person in the group. Works for 1, 2, or N people --
--- everything downstream loops over this table instead of hardcoding
--- "me" and "wife" as separate columns anywhere.
+-- People/Users
 CREATE TABLE people (
-    person_id   TEXT PRIMARY KEY,   -- e.g. 'person_1'
+    person_id   TEXT PRIMARY KEY,
     name        TEXT NOT NULL
 );
 
--- One row per movie or TV series. TV is stored at SERIES level only
--- -- no per-episode rows. content_type is just another column, so
--- every feature/model treats movie vs TV as one more signal, not a
--- separate pipeline.
+-- Movie or TV series
 CREATE TABLE titles (
     title_id           TEXT PRIMARY KEY,   -- 'movie_<tmdb_id>' or 'tv_<tmdb_id>'
     tmdb_id            INTEGER NOT NULL,
@@ -27,68 +22,43 @@ CREATE TABLE titles (
     runtime_minutes    INTEGER,             -- movies: runtime; tv: avg episode runtime
     number_of_seasons  INTEGER,             -- null for movies
     status             TEXT,                -- 'Released', 'Ended', 'Returning Series', etc.
-    imdb_id            TEXT,                -- from external_ids -- needed for OMDb critic scores
-    wikidata_id        TEXT,                -- from external_ids -- needed for the Wikipedia plot
-                                            -- lookup (wbgetentities by this id). Request both via
-                                            -- append_to_response=keywords,credits,external_ids
+    imdb_id            TEXT,                -- needed for OMDb critic scores
+    wikidata_id        TEXT,                -- needed for the Wikipedia plot
     overview           TEXT,                -- TMDB's short synopsis
-    detailed_plot      TEXT,                -- longer Wikipedia "Plot" section, when available --
-                                             -- null for obscure titles; Phase 2 falls back to
-                                             -- `overview` + keywords for the embedding text in that case
+    detailed_plot      TEXT,                -- longer Wikipedia "Plot" section, when available
     source             TEXT,                -- 'letterboxd_import' or 'tmdb_discover'
     date_added         TEXT DEFAULT (datetime('now'))
 );
 
--- Genres are multi-valued per title, so they get their own table
--- instead of a comma-separated column. This is the standard fix for
--- "one movie, many genres" in a relational schema -- it also makes
--- one-hot encoding in Phase 2 a one-line groupby instead of string
--- parsing.
+-- Genres (titles 1:M title_genres)
 CREATE TABLE title_genres (
     title_id TEXT NOT NULL REFERENCES titles(title_id),
     genre    TEXT NOT NULL,
     PRIMARY KEY (title_id, genre)
 );
 
--- Cast, director, writer, and (for TV) creator all live here with a
--- role label. Same multi-valued fix as genres. "order" is cast
--- billing order from TMDB, useful later for top-N frequency bucketing
--- (Phase 2) so you don't one-hot encode every extra who's ever
--- appeared in anything.
+-- Cast, director, writer, and (for TV) creator (title 1:M title_credits)
 CREATE TABLE title_credits (
     title_id TEXT NOT NULL REFERENCES titles(title_id),
     role     TEXT NOT NULL CHECK (role IN ('director','writer','creator','cast')),
     name     TEXT NOT NULL,
-    "order"  INTEGER,
+    "order"  INTEGER,       -- "order" is cast billing order from TMDB
     PRIMARY KEY (title_id, role, name)
 );
 
--- TMDB keyword tags -- short structured theme/topic labels (e.g.
--- "surreal", "social commentary", "psychological", "found footage").
--- Multi-valued per title, same junction pattern as genres. This is
--- the most direct hit on the original "theme/style/topic" metadata
--- goal -- richer signal than the one-line overview alone, and free
--- via the same TMDB request (append_to_response=keywords). Note:
--- TMDB's movie endpoint returns these under a "keywords" key, the TV
--- endpoint under "results" -- same data, different key, branch on
--- content_type when parsing.
+-- TMDB keyword tags (title 1:M title_keywords)
 CREATE TABLE title_keywords (
     title_id TEXT NOT NULL REFERENCES titles(title_id),
     keyword  TEXT NOT NULL,
     PRIMARY KEY (title_id, keyword)
 );
 
--- Production companies. Separate from title_credits since companies
--- aren't people and carry different fields (TMDB company id, origin
--- country). Frequency-bucketed in Phase 2 just like cast -- most
--- films list several minor co-production/finance entities alongside
--- the one company that actually signals taste (e.g. A24, NEON).
+-- Production companies (title 1:M title_companies)
 CREATE TABLE title_companies (
-    title_id       TEXT NOT NULL REFERENCES titles(title_id),
-    company_id     INTEGER,           -- TMDB company id
-    company_name   TEXT NOT NULL,
-    origin_country TEXT,
-    PRIMARY KEY (title_id, company_name)
+    title_id     TEXT NOT NULL REFERENCES titles(title_id),
+    company_id   INTEGER NOT NULL,
+    company_name TEXT NOT NULL,
+    PRIMARY KEY (title_id, company_id)
 );
 
 -- Producer-tier credits (Producer, Executive Producer, Co-Producer,
@@ -102,23 +72,31 @@ CREATE TABLE title_crew_extra (
     PRIMARY KEY (title_id, job, name)
 );
 
--- Long format: one row per (person, title, rating) rather than one
--- column per person. This single choice is what makes adding a 3rd,
--- 4th, 5th person later just a new person_id -- not a new column and
--- not a schema migration.
-CREATE TABLE ratings (
-    person_id  TEXT NOT NULL REFERENCES people(person_id),
-    title_id   TEXT NOT NULL REFERENCES titles(title_id),
-    rating     REAL NOT NULL,        -- normalized 0-5 to match Letterboxd's scale
-    source     TEXT,                 -- 'letterboxd_import'
-    date_rated TEXT,
-    PRIMARY KEY (person_id, title_id)
+-- Diary / Ratings / Watchlist
+CREATE TABLE watch_events (
+    watch_event_id  TEXT PRIMARY KEY,    -- uuid
+    person_id       TEXT NOT NULL REFERENCES people(person_id),
+    title_id        TEXT NOT NULL REFERENCES titles(title_id),
+    watched_date    TEXT NOT NULL,
+    is_rewatch      INTEGER CHECK (is_rewatch IN (0,1)),  -- nullable
+    rating_at_watch REAL
 );
 
--- Critic/audience scores kept separate per source rather than
--- pre-blended into one number. The weighted critic_score (Phase 8)
--- is computed on read from these rows, so you can change the
--- weights in config.yaml later without re-scraping anything.
+-- "Current rating" and "last watched" as derived values
+CREATE VIEW current_ratings AS
+SELECT person_id, title_id, rating_at_watch AS rating, watched_date
+FROM (
+    SELECT person_id, title_id, rating_at_watch, watched_date,
+           ROW_NUMBER() OVER (
+               PARTITION BY person_id, title_id
+               ORDER BY watched_date DESC
+           ) AS rn
+    FROM watch_events
+    WHERE rating_at_watch IS NOT NULL
+)
+WHERE rn = 1;
+
+-- Critic & audience scores/ratings
 CREATE TABLE external_scores (
     title_id    TEXT NOT NULL REFERENCES titles(title_id),
     source      TEXT NOT NULL CHECK (source IN
@@ -128,10 +106,8 @@ CREATE TABLE external_scores (
     PRIMARY KEY (title_id, source)
 );
 
--- Tracks how a title entered the candidate pool (Phase 1b) -- which
--- language query or discover call surfaced it, and when. Lets you
--- debug "why is this even a candidate" and cleanly exclude anything
--- already in `ratings`.
+-- Tracks how a title entered the candidate pool -- which
+-- language query or discover call surfaced it, and when
 CREATE TABLE candidate_pool (
     title_id    TEXT NOT NULL REFERENCES titles(title_id),
     pulled_via  TEXT,        -- 'discover_lang_ja', 'discover_lang_hi', 'general', etc.
@@ -139,12 +115,9 @@ CREATE TABLE candidate_pool (
     PRIMARY KEY (title_id, pulled_via)
 );
 
--- One row per recommendation actually SHOWN to the group. This is
--- the linkage Phase 10 depends on: without recommendation_id,
--- feedback can't be traced back to the mood query, novelty setting,
--- or aggregation mode that produced it.
+-- Recommendation shown to user groups
 CREATE TABLE recommendations (
-    recommendation_id    TEXT PRIMARY KEY,   -- uuid, generated at recommend() call time
+    recommendation_id    TEXT PRIMARY KEY,    -- uuid, generated at recommend() call time
     title_id             TEXT NOT NULL REFERENCES titles(title_id),
     generated_at         TEXT DEFAULT (datetime('now')),
     mode                 TEXT,                -- 'personal_fit','mood','buzz','novelty','blended'
@@ -155,11 +128,7 @@ CREATE TABLE recommendations (
     score_breakdown_json TEXT                -- raw per-person/per-signal scores, for debugging
 );
 
--- One row per person's reaction to a shown recommendation. This is
--- what Phase 10's retraining notebook reads from. reject_reason
--- distinguishes feature-level rejections (train on them, down-
--- weighted) from vibe/mood rejections (route to the separate
--- acceptance model instead).
+-- Person's reaction to a shown recommendation
 CREATE TABLE feedback (
     feedback_id       TEXT PRIMARY KEY,    -- uuid
     recommendation_id TEXT NOT NULL REFERENCES recommendations(recommendation_id),

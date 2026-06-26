@@ -13,10 +13,12 @@ Build a local, notebook/script-based recommendation system that learns me and my
    - *Mood-based* — free-text query like "something surreal and slow" matched semantically against unwatched titles.
    - *Buzz/trending* — pulled from TMDB trending, Reddit discussion volume, and Letterboxd's popular lists. (Z-score each within its own source, average (or weight, if you find one source noisier — Reddit mention counts skew toward already-huge titles), and that's your `buzz_score`.)
    - *Left-field/novelty* — deliberately unlike your usual patterns, with a toggleable dial that ranges from "taste-adjacent stretch" to "totally outside your normal lane."
+   - *recency* — controls how much weight your recent watch history carries when building the taste profile that personal-fit and novelty both depend on. Implemented as exponential decay with an adjustable half-life (a rating's influence halves every N days)
 
 ```python
 recommend(mood="surreal political", novelty=0.7, min_critic_score=60,
-          sort_by="novelty_score", buzz_window="weekly")
+          sort_by="novelty_score", buzz_window="weekly",
+          recency_half_life="2w")
 ```
 
 4. **Score "who'll like it more"** — a direct comparison between your predicted enjoyment and your wife's for any given title.

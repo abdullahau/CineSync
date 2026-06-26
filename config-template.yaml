@@ -49,6 +49,13 @@ thresholds:
   # model and falls back to Phase 3 cluster-based suggestions instead.
   min_ratings_for_personal_model: 30
 
+recency:
+  # Default half-life used by recommend() when recency_half_life isn't
+  # specified -- see src/recency.py. Override per-call with a preset
+  # ('2d','1w','2w','1m','3m','6m','1y','2y','lifetime') or a raw
+  # number of days for finer control.
+  default_half_life_days: 90
+
 # Phase 8. Normalized to 0-100 per source before weighting; weight is
 # redistributed proportionally if a source is missing for a title.
 critic_score_weights:
