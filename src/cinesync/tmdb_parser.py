@@ -210,4 +210,5 @@ def parse_tmdb_response(
         "companies": _parse_companies(data),
         "credits": _parse_credits(data, content_type),
         "crew_extra": _parse_crew_extra(data),
+        "external_score": _parse_tmdb_score(data),
     }
