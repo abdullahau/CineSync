@@ -3,19 +3,24 @@ import os
 import requests
 from dotenv import load_dotenv
 from cinesync.utils.net import force_ipv4
+from cinesync.paths import DATA_DIR
 
 load_dotenv(".env")
 force_ipv4()
 
-url_movie = "https://api.themoviedb.org/3/movie/246?append_to_response=keywords,credits,external_ids"
-url_series = "https://api.themoviedb.org/3/tv/95396?append_to_response=keywords,credits,external_ids"
+content_type = "movie"  # "movie"
+tmdb_id = 11
+
+path = DATA_DIR / "discover" / content_type
+
+url = f"https://api.themoviedb.org/3/{content_type}/{tmdb_id}?append_to_response=keywords,credits,external_ids"
 
 headers = {
     "accept": "application/json",
     "Authorization": f"Bearer {os.getenv('TMDB_API_KEY')}",
 }
 
-response = requests.get(url_movie, headers=headers)
+response = requests.get(url, headers=headers)
 
-with open("tests/tmdb_movies-1.json", "w", encoding="utf-8") as file:
+with open(path / f"{tmdb_id}.json", "w", encoding="utf-8") as file:
     json.dump(response.json(), file, indent=4)

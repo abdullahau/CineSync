@@ -3,6 +3,7 @@ import os
 import requests
 from dotenv import load_dotenv
 from cinesync.utils.net import force_ipv4
+from cinesync.paths import DATA_DIR
 
 load_dotenv(".env")
 force_ipv4()
@@ -16,5 +17,5 @@ headers = {
 
 response = requests.get(url, headers=headers)
 
-with open("tests/tmdb_config.json", "w", encoding="utf-8") as file:
+with open(DATA_DIR / "tmdb_config.json", "w", encoding="utf-8") as file:
     json.dump(response.json(), file, indent=4)
