@@ -3,8 +3,8 @@
 config.yaml
 
 # Database
-data/*
-!data/.gitkeep
+data/cinesync.db
+data/tmdb_popularity/
 
 # Editor files
 .vscode
