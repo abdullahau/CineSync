@@ -83,6 +83,10 @@ CREATE TABLE watch_events (
     rating_at_watch REAL
 );
 
+-- Makes re-importing a Letterboxd export idempotent
+CREATE UNIQUE INDEX idx_watch_events_unique
+    ON watch_events (person_id, title_id, watched_date);
+
 -- "Current rating" and "last watched" as derived values
 CREATE VIEW current_ratings AS
 SELECT person_id, title_id, rating_at_watch AS rating, watched_date
