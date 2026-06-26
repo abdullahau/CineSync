@@ -37,12 +37,12 @@ languages_of_interest:
   - bn  # Bengali
 
 apis:
-  tmdb_api_key: "PUT_YOUR_KEY_HERE"
-  omdb_api_key: "PUT_YOUR_KEY_HERE"
+  tmdb_api_key: ${TMDB_API_KEY}
+  omdb_api_key: ${OMDB_API_KEY}
   reddit:
-    client_id: "PUT_YOUR_KEY_HERE"
-    client_secret: "PUT_YOUR_KEY_HERE"
-    user_agent: "cinesync/0.1 by your_reddit_username"
+    client_id: ${REDDIT_CLIENT_ID}
+    client_secret: ${REDDIT_CLIENT_SECRET}
+    user_agent: "cinesync/0.1 by ${REDDIT_USERNAME}"
 
 thresholds:
   # Below this many ratings, Phase 4 skips that person's personal
