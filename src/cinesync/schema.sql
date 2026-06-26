@@ -27,7 +27,7 @@ CREATE TABLE titles (
     overview           TEXT,                -- TMDB's short synopsis
     detailed_plot      TEXT,                -- longer Wikipedia "Plot" section, when available
     source             TEXT,                -- 'letterboxd_import' or 'tmdb_discover'
-    date_added         TEXT DEFAULT (datetime('now')) -- immutable
+    date_added         TEXT DEFAULT (datetime('now')), -- immutable
     last_refreshed     TEXT DEFAULT (datetime('now')) -- mutable -- when metadata was last verified/re-fetched.
 );
 
