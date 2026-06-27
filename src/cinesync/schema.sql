@@ -62,9 +62,7 @@ CREATE TABLE title_companies (
     PRIMARY KEY (title_id, company_id)
 );
 
--- Producer-tier credits (Producer, Executive Producer, Co-Producer,
--- Supervising Producer, Consulting Producer, etc.) plus Director of
--- Photography. Job is stored verbatim and not mapped to a fixed role
+-- Producer-tier credits plus Director of Photography.
 CREATE TABLE title_crew_extra (
     title_id   TEXT NOT NULL REFERENCES titles(title_id),
     job        TEXT NOT NULL,      -- verbatim TMDB job title, e.g. 'Executive Producer'
@@ -121,8 +119,7 @@ CREATE TABLE title_buzz_snapshots (
     PRIMARY KEY (title_id, source, snapshot_date)
 );
 
--- Tracks how a title entered the candidate pool -- which
--- language query or discover call surfaced it, and when
+-- Eligible titles for recommendations
 CREATE TABLE candidate_pool (
     title_id    TEXT NOT NULL REFERENCES titles(title_id),
     pulled_via  TEXT,        -- 'discover_lang_ja', 'discover_lang_hi', 'general', etc.
@@ -132,15 +129,17 @@ CREATE TABLE candidate_pool (
 
 -- Recommendation shown to user groups
 CREATE TABLE recommendations (
-    recommendation_id    TEXT PRIMARY KEY,    -- uuid, generated at recommend() call time
-    title_id             TEXT NOT NULL REFERENCES titles(title_id),
-    generated_at         TEXT DEFAULT (datetime('now')),
-    mode                 TEXT,                -- 'personal_fit','mood','buzz','novelty','blended'
-    mood_query           TEXT,
-    novelty_dial         REAL,
-    min_critic_score     REAL,
-    aggregation_mode     TEXT,               -- 'mean','min','harmonic_mean','show_all'
-    score_breakdown_json TEXT                -- raw per-person/per-signal scores, for debugging
+    recommendation_id       TEXT PRIMARY KEY,    -- uuid, generated at recommend() call time
+    title_id                TEXT NOT NULL REFERENCES titles(title_id),
+    generated_at            TEXT DEFAULT (datetime('now')),
+    mode                    TEXT,               -- 'personal_fit','mood','buzz','novelty','blended'
+    mood_query              TEXT,
+    novelty_dial            REAL,
+    recency_half_life_days  REAL,            -- numeric value to track recency dial
+    buzz_window             TEXT,            -- 'daily' / 'weekly' -- a real scoring input, same
+    min_critic_score        REAL,
+    aggregation_mode        TEXT,               -- 'mean','min','harmonic_mean','show_all'
+    score_breakdown_json    TEXT                -- raw per-person/per-signal scores, for debugging
 );
 
 -- Person's reaction to a shown recommendation

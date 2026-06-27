@@ -25,6 +25,7 @@ where = ["src"]
 
 [project.scripts]
 cinesync-init-db = "cinesync.init_db:init_db"
+tmdb-parser = "cinesync.tmdb_parser:tmdb_parser"
 
 [tool.ruff]
 line-length = 88
