@@ -26,6 +26,7 @@ CREATE TABLE titles (
     wikidata_id        TEXT,                -- needed for the Wikipedia plot
     overview           TEXT,                -- TMDB's short synopsis
     detailed_plot      TEXT,                -- longer Wikipedia "Plot" section, when available
+    omdb_awards_text   TEXT,                -- raw, unparsed OMDb "Awards" string
     source             TEXT,                -- 'letterboxd_import' or 'tmdb_discover'
     date_added         TEXT DEFAULT (datetime('now')), -- immutable
     last_refreshed     TEXT DEFAULT (datetime('now')) -- mutable -- when metadata was last verified/re-fetched.
@@ -117,6 +118,16 @@ CREATE TABLE title_buzz_snapshots (
     snapshot_date TEXT NOT NULL,
     value         REAL NOT NULL,        -- TMDB popularity or reddit mentions
     PRIMARY KEY (title_id, source, snapshot_date)
+);
+
+-- Awards received (P166) and nominations (P1411)
+CREATE TABLE title_awards (
+    title_id   TEXT NOT NULL REFERENCES titles(title_id),
+    award_name TEXT NOT NULL,        -- e.g. 'Cannes Film Festival: Palme d'Or'
+    result     TEXT NOT NULL CHECK (result IN ('won','nominated')),
+    year       INTEGER,
+    source     TEXT DEFAULT 'wikidata',
+    PRIMARY KEY (title_id, award_name, result, year)
 );
 
 -- Eligible titles for recommendations
