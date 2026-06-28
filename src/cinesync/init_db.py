@@ -2,13 +2,12 @@
 Phase 0: initialize the CineSync SQLite database from schema.sql.
 
 Run once:
-    python src/init_db.py
+    uv run cinesync-init-db
 
 Creates data/cinesync.db. Will NOT overwrite an existing db -- delete
 data/cinesync.db yourself first if you want a clean rebuild (e.g.
 after editing schema.sql).
 """
-
 import sqlite3
 from importlib.resources import files
 from cinesync.paths import DATA_DIR

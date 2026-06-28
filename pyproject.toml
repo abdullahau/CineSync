@@ -1,7 +1,7 @@
 [project]
 name = "cinesync"
 version = "0.1.0"
-description = "Add your description here"
+description = "Local movie/TV recommendation system for individuals, couples, or groups"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
@@ -14,14 +14,25 @@ dependencies = [
     "pyyaml>=6.0.3",
     "requests>=2.34.2",
     "scikit-learn>=1.9.0",
+    # "praw",
+    # "scikit-learn",
+    # "sentence-transformers",
+    # "numba>=0.59",
+    # "umap-learn",
+    # "hdbscan",
+    # "lightgbm",
+    # "torch",
 ]
 
 [build-system]
-requires = ["setuptools>=61"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.hatch.build.targets.wheel]
+packages = ["src/cinesync"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/cinesync/schema.sql" = "cinesync/schema.sql"
 
 [project.scripts]
 cinesync-init-db = "cinesync.init_db:init_db"

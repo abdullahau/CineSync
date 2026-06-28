@@ -36,6 +36,22 @@ languages_of_interest:
   - ms  # Malay
   - bn  # Bengali
 
+discover_filter:
+  min_runtime_minutes: 40
+  min_vote_count: 15
+  release_year_floor_years_ago: 35
+
+recommendations_discovery:
+  # TMDB's /recommendations endpoint sweep settings
+  min_rating: 4.0           # seed from titles rated at/above this (0-5 scale)
+  max_pages_per_seed: 2     # TMDB's relevance ordering means page 1-2 carries most of the signal
+
+rate_limiting:
+  # Self-imposed pacing, well under TMDB's real ~40-50 req/s ceiling
+  min_interval_seconds: 0.15
+  max_retries: 5
+  export_pace_seconds: 1.0  # separate, gentler pace for the large daily-export downloads
+
 apis:
   tmdb_api_key: ${TMDB_API_KEY}
   omdb_api_key: ${OMDB_API_KEY}

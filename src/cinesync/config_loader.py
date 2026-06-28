@@ -13,6 +13,7 @@ import re
 import yaml
 from cinesync.paths import PROJECT_ROOT
 
+CONFIG_PATH = PROJECT_ROOT / "config.yaml"
 _ENV_VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
@@ -39,7 +40,7 @@ def _substitute_env_vars(value):
 
 
 def load_config():
-    with open(PROJECT_ROOT / "config.yaml", "r") as f:
+    with open(CONFIG_PATH, "r") as f:
         raw = yaml.safe_load(f)
     return _substitute_env_vars(raw)
 

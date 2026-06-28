@@ -9,11 +9,8 @@ This preserves the RELATIVE trust between whichever sources you
 actually have for a title, rather than fabricating a value for the
 ones you don't.
 """
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from config_loader import load_config
+from cinesync.config_loader import load_config
 
 
 def critic_score(scores: dict, weights: dict = None):

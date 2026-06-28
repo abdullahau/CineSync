@@ -27,7 +27,7 @@ CREATE TABLE titles (
     overview           TEXT,                -- TMDB's short synopsis
     detailed_plot      TEXT,                -- longer Wikipedia "Plot" section, when available
     omdb_awards_text   TEXT,                -- raw, unparsed OMDb "Awards" string
-    source             TEXT,                -- 'letterboxd_import' or 'tmdb_discover'
+    source             TEXT,                -- title discovery source
     date_added         TEXT DEFAULT (datetime('now')), -- immutable
     last_refreshed     TEXT DEFAULT (datetime('now')) -- mutable -- when metadata was last verified/re-fetched.
 );
@@ -86,7 +86,7 @@ CREATE TABLE watch_events (
 CREATE UNIQUE INDEX idx_watch_events_unique
     ON watch_events (person_id, title_id, watched_date);
 
--- "Current rating" and "last watched" as derived values
+-- "Current rating" and "last watched" derived from watch_events
 CREATE VIEW current_ratings AS
 SELECT person_id, title_id, rating_at_watch AS rating, watched_date
 FROM (
@@ -130,12 +130,19 @@ CREATE TABLE title_awards (
     PRIMARY KEY (title_id, award_name, result, year)
 );
 
--- Eligible titles for recommendations
-CREATE TABLE candidate_pool (
-    title_id    TEXT NOT NULL REFERENCES titles(title_id),
-    pulled_via  TEXT,        -- 'discover_lang_ja', 'discover_lang_hi', 'general', etc.
-    date_pulled TEXT DEFAULT (datetime('now')),
-    PRIMARY KEY (title_id, pulled_via)
+-- Recommendation eligibility derived from anti-join of titles & watch_events
+CREATE VIEW unwatched_titles AS
+SELECT t.*
+FROM titles t
+WHERE t.title_id NOT IN (SELECT DISTINCT title_id FROM watch_events);
+
+-- TMDB's /recommendations links -> relevance ordering, 1 = most relevant.
+CREATE TABLE title_recommendation_links (
+    seed_title_id        TEXT NOT NULL REFERENCES titles(title_id),
+    recommended_title_id TEXT NOT NULL REFERENCES titles(title_id),
+    rank                  INTEGER,
+    date_pulled           TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (seed_title_id, recommended_title_id)
 );
 
 -- Recommendation shown to user groups
