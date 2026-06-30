@@ -26,13 +26,14 @@ languages_of_interest:
   - hi  # Hindi
   - ur  # Urdu
   - fr  # French
-  - it  # Italian
   - es  # Spanish
   - fa  # Persian
+  - de  # German
+  - it  # Italian
+  - id  # Indonesian
+  - ru  # Russian
   - sv  # Swedish
   - no  # Norwegian
-  - de  # German
-  - id  # Indonesian
   - ms  # Malay
   - bn  # Bengali
 
