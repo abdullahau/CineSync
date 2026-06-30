@@ -8,10 +8,10 @@ from cinesync.paths import DATA_DIR
 load_dotenv(".env")
 force_ipv4()
 
-content_type = "movie"  # "movie"
-tmdb_id = 11
+content_type = "tv"  # "movie", "tv"
+tmdb_id = 37680
 
-path = DATA_DIR / "discover" / content_type
+path = DATA_DIR / "tmdb_response_sample" / content_type
 
 url = f"https://api.themoviedb.org/3/{content_type}/{tmdb_id}?append_to_response=keywords,credits,external_ids"
 

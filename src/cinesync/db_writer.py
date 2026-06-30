@@ -23,6 +23,7 @@ Upsert semantics, per table:
 import sqlite3
 
 
+# TODO: modify any other table/column that can be updated in the upsert function below, i.e. genres and credits (maybe?)
 def upsert_parsed_title(conn: sqlite3.Connection, parsed: dict) -> bool:
     """
     Returns True if this was a brand-new title (first INSERT), False

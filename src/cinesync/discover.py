@@ -9,6 +9,7 @@ from datetime import date
 
 
 def build_discover_params(
+    content_type: str,
     original_language: str,
     page: int = 1,
     min_vote_count: int = 15,
@@ -23,16 +24,23 @@ def build_discover_params(
     defaults once Phase 1b is actually wired up.
     """
     floor_year = date.today().year - release_year_floor_years_ago
-    return {
+    params = {
         "include_adult": "false",
-        "include_video": "false",
         "with_original_language": original_language,
         "vote_count.gte": min_vote_count,
-        "with_runtime.gte": min_runtime_minutes,
-        "primary_release_date.gte": f"{floor_year}-01-01",
         "sort_by": sort_by,
         "page": page,
     }
+    if content_type == "movie":
+        params["include_video"] = "false"
+        params["with_runtime.gte"] = min_runtime_minutes
+        params["primary_release_date.gte"] = f"{floor_year}-01-01"
+    elif content_type == "tv":
+        params["first_air_date.gte"] = f"{floor_year}-01-01"
+    else:
+        raise ValueError(f"content_type must be 'movie' or 'tv', got {content_type!r}")
+
+    return params
 
 
 def paced_get(

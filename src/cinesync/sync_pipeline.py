@@ -55,7 +55,7 @@ def fetch_discover_page(
     than relying on build_discover_params' own hardcoded defaults.
     """
     url = f"{TMDB_BASE}/discover/{content_type}"
-    params = build_discover_params(language, page=page, **filter_kwargs)
+    params = build_discover_params(content_type, language, page=page, **filter_kwargs)
     headers = {
         "accept": "application/json",
         "Authorization": f"Bearer {api_key}",
@@ -80,6 +80,7 @@ def fetch_recommendations_page(
     return response.json()
 
 
+# TODO: `process_one_candidate` is a first entry function, i.e. not for updating titles. Create a similar function for updating.
 def process_one_candidate(
     conn,
     content_type: str,
