@@ -39,6 +39,13 @@ CREATE TABLE title_genres (
     PRIMARY KEY (title_id, genre)
 );
 
+-- TMDB keyword tags (title 1:M title_keywords)
+CREATE TABLE title_keywords (
+    title_id TEXT NOT NULL REFERENCES titles(title_id),
+    keyword  TEXT NOT NULL,
+    PRIMARY KEY (title_id, keyword)
+);
+
 -- Cast, director, writer, and (for TV) creator (title 1:M title_credits)
 CREATE TABLE title_credits (
     title_id TEXT NOT NULL REFERENCES titles(title_id),
@@ -46,13 +53,6 @@ CREATE TABLE title_credits (
     name     TEXT NOT NULL,
     "order"  INTEGER,       -- "order" is cast billing order from TMDB
     PRIMARY KEY (title_id, role, name)
-);
-
--- TMDB keyword tags (title 1:M title_keywords)
-CREATE TABLE title_keywords (
-    title_id TEXT NOT NULL REFERENCES titles(title_id),
-    keyword  TEXT NOT NULL,
-    PRIMARY KEY (title_id, keyword)
 );
 
 -- Production companies (title 1:M title_companies)
