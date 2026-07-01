@@ -1,7 +1,6 @@
 """
 Phase 1b: build the candidate pool via TMDB's /discover/movie and
-/discover/tv -- one sweep per language in config.yaml's
-languages_of_interest.
+/discover/tv -- one sweep per language in config.yaml's languages_of_interest.
 """
 
 import time
@@ -14,31 +13,52 @@ def build_discover_params(
     page: int = 1,
     min_vote_count: int = 15,
     min_runtime_minutes: int = 40,
-    release_year_floor_years_ago: int = 35,
     sort_by: str = "vote_count.desc",
+    date_gte: str | None = None,
+    date_lte: str | None = None,
 ) -> dict:
     """
     Build query params for one page of one language's /discover sweep.
-    Defaults match config.yaml's candidate_pool section -- pass that
-    config in explicitly rather than relying on these hardcoded
-    defaults once Phase 1b is actually wired up.
+
+    Date windowing: pass explicit `date_gte` and `date_lte`
+    ('YYYY-MM-DD') to query one bounded date window -- this is how the
+    500-page-cap workaround splits a broad sweep into sub-queries. When
+    date_gte is not given, it falls back to a floor of
+    release_year_floor_years_ago before today (original behavior, still
+    valid for narrow sweeps that stay under 500 pages). date_lte alone
+    has no effect without date_gte.
+
+    Defaults match config.yaml's discover_filter section -- pass that
+    config in explicitly rather than relying on these defaults.
     """
-    floor_year = date.today().year - release_year_floor_years_ago
+    gte_param, lte_param = (
+        ("primary_release_date.gte", "primary_release_date.lte")
+        if content_type == "movie"
+        else ("first_air_date.gte", "first_air_date.lte")
+    )
+
     params = {
         "include_adult": "false",
         "with_original_language": original_language,
         "vote_count.gte": min_vote_count,
+        gte_param: date_gte,
         "sort_by": sort_by,
         "page": page,
     }
+
     if content_type == "movie":
-        params["include_video"] = "false"
-        params["with_runtime.gte"] = min_runtime_minutes
-        params["primary_release_date.gte"] = f"{floor_year}-01-01"
+        params |= {
+            "include_video": "false",
+            "with_runtime.gte": min_runtime_minutes,
+            gte_param: date_gte,
+        }
     elif content_type == "tv":
-        params["first_air_date.gte"] = f"{floor_year}-01-01"
+        pass
     else:
         raise ValueError(f"content_type must be 'movie' or 'tv', got {content_type!r}")
+
+    if date_lte is not None:
+        params[lte_param] = date_lte
 
     return params
 
