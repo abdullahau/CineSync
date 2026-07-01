@@ -4,6 +4,7 @@ config.yaml
 
 # Database
 data/cinesync.db
+data/cinesync.db.bak
 data/tmdb_popularity/
 
 # Editor files
