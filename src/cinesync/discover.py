@@ -20,13 +20,20 @@ def build_discover_params(
     """
     Build query params for one page of one language's /discover sweep.
 
-    Date windowing: pass explicit `date_gte` and `date_lte`
-    ('YYYY-MM-DD') to query one bounded date window -- this is how the
-    500-page-cap workaround splits a broad sweep into sub-queries. When
-    date_gte is not given, it falls back to a floor of
-    release_year_floor_years_ago before today (original behavior, still
-    valid for narrow sweeps that stay under 500 pages). date_lte alone
-    has no effect without date_gte.
+    Date filter: movies use `primary_release_date.gte/.lte`;
+    TV uses `first_air_date.gte/.lte`.
+
+    Runtime filter: The runtime floor exists to drop short films
+    for movies only.
+
+    Date windowing: pass explicit `date_gte`/`date_lte` ('YYYY-MM-DD')
+    to query one bounded date window -- this is how the 500-page-cap
+    workaround splits a broad sweep into sub-queries. Either bound is
+    optional and simply omitted from the query when None (so a call
+    with no dates returns TMDB's full unbounded range, and date_lte
+    works independently of date_gte). The caller (the notebook's
+    windowing loop) supplies the floor/ceiling, so there's no
+    years-ago fallback here anymore.
 
     Defaults match config.yaml's discover_filter section -- pass that
     config in explicitly rather than relying on these defaults.
@@ -41,7 +48,6 @@ def build_discover_params(
         "include_adult": "false",
         "with_original_language": original_language,
         "vote_count.gte": min_vote_count,
-        gte_param: date_gte,
         "sort_by": sort_by,
         "page": page,
     }
@@ -50,13 +56,14 @@ def build_discover_params(
         params |= {
             "include_video": "false",
             "with_runtime.gte": min_runtime_minutes,
-            gte_param: date_gte,
         }
     elif content_type == "tv":
         pass
     else:
         raise ValueError(f"content_type must be 'movie' or 'tv', got {content_type!r}")
 
+    if date_gte is not None:
+        params[gte_param] = date_gte
     if date_lte is not None:
         params[lte_param] = date_lte
 

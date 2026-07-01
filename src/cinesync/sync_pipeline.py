@@ -1,15 +1,15 @@
 """
 TMDB fetch primitives for Phase 1b candidate discovery.
 
-    known_ids = known_tmdb_ids(conn, "movie")
-    for page in range(1, 6):
-        payload = fetch_discover_page("movie", "ja", page, api_key, session, **filters)
-        for entry in payload["results"]:
-            result = process_one_candidate(conn, "movie", entry["id"], api_key, session,
-                                            known_ids, source_tag="discover_lang_ja")
-            print(entry["id"], result)
-        if page >= payload.get("total_pages", 1):
-            break
+known_ids = known_tmdb_ids(conn, "movie")
+for page in range(1, 6):
+    payload = fetch_discover_page("movie", "ja", page, api_key, session, **filters)
+    for entry in payload["results"]:
+        result = process_one_candidate(conn, "movie", entry["id"], api_key, session,
+                                        known_ids, source_tag="discover_lang_ja")
+        print(entry["id"], result)
+    if page >= payload.get("total_pages", 1):
+        break
 """
 
 from cinesync.discover import paced_get, build_discover_params
@@ -50,9 +50,9 @@ def fetch_discover_page(
     """
     One page of one language's /discover sweep. filter_kwargs are
     passed straight to build_discover_params (min_vote_count,
-    min_runtime_minutes, release_year_floor_years_ago, sort_by) --
-    pass config.yaml's discover_filter section here explicitly rather
-    than relying on build_discover_params' own hardcoded defaults.
+    min_runtime_minutes, sort_by, date_gte, date_lte) -- pass
+    config.yaml's discover_filter values plus the current window's
+    date bounds here explicitly.
     """
     url = f"{TMDB_BASE}/discover/{content_type}"
     params = build_discover_params(content_type, language, page=page, **filter_kwargs)
@@ -94,7 +94,9 @@ def process_one_candidate(
     The one shared step every discovery source needs: skip the detail
     fetch entirely if already known (the expensive call), otherwise
     fetch + parse + upsert. Returns 'new' or 'already_known' for the
-    notebook to print/count as it likes.
+    notebook to print/count as it likes. No candidate_pool side-effect
+    -- eligibility is now just `unwatched_titles`, computed live, not
+    written here.
     """
     if tmdb_id in known_ids:
         return "already_known"

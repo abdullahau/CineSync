@@ -18,8 +18,6 @@ regardless of how titles cluster in time.
 
 from datetime import date
 
-# The date-filter parameter names differ by endpoint (same reason
-# build_discover_params branches on content_type).
 DATE_PARAM = {"movie": "primary_release_date", "tv": "first_air_date"}
 TMDB_MAX_PAGES = 500
 
