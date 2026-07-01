@@ -13,34 +13,33 @@ people:
   # - id: person_3
   #   name: "Add more rows here for additional group members"
 
-embeddings:
-  model: "all-MiniLM-L6-v2"
-  # IMPORTANT: if you ever swap this model, old and new embeddings are
-  # NOT comparable. Re-run Phase 2 for every title if you change this,
-  # or keep two columns (old/new) during a transition.
+# [language, runtime_gte, vote_count_gte, date_gte, date_lte]
+discover_sweep:
+  - [en, 40, 15, "1940-01-01", "2026-12-31"]    # English
+  - [ko, 40, 10, "1940-01-01", "2026-12-31"]    # Korean
+  - [ja, 40, 10, "1940-01-01", "2026-12-31"]    # Japanese
+  - [hi, 40, 5, "1940-01-01", "2026-12-31"]     # Hindi
+  - [ur, 40, 0, "1940-01-01", "2026-12-31"]     # Urdu
+  - [fr, 40, 15, "1940-01-01", "2026-12-31"]    # French
+  - [es, 40, 15, "1940-01-01", "2026-12-31"]    # Spanish
+  - [fa, 40, 1, "1940-01-01", "2026-12-31"]     # Persian
+  - [de, 40, 15, "1940-01-01", "2026-12-31"]    # German
+  - [it, 40, 15, "1940-01-01", "2026-12-31"]    # Italian
+  - [id, 40, 1, "1940-01-01", "2026-12-31"]     # Indonesian
+  - [ru, 40, 15, "1940-01-01", "2026-12-31"]    # Russian
+  - [sv, 40, 15, "1940-01-01", "2026-12-31"]    # Swedish
+  - ['no', 40, 15, "1940-01-01", "2026-12-31"]  # Norwegian
+  - [ms, 40, 1, "1940-01-01", "2026-12-31"]     # Malay
+  - [bn, 40, 5, "1940-01-01", "2026-12-31"]     # Bengali
 
-languages_of_interest:
-  - en  # English
-  - ko  # Korean
-  - ja  # Japanese
-  - hi  # Hindi
-  - ur  # Urdu
-  - fr  # French
-  - es  # Spanish
-  - fa  # Persian
-  - de  # German
-  - it  # Italian
-  - id  # Indonesian
-  - ru  # Russian
-  - sv  # Swedish
-  - no  # Norwegian
-  - ms  # Malay
-  - bn  # Bengali
-
-discover_filter:
-  min_runtime_minutes: 40
-  min_vote_count: 15
-  release_year_floor_years_ago: 35
+# Phase 8. Normalized to 0-100 per source before weighting; weight is
+# redistributed proportionally if a source is missing for a title.
+critic_score_weights:
+  letterboxd_rating: 0.35
+  rt_critic: 0.35
+  rt_audience: 0.10
+  imdb_rating: 0.10
+  tmdb_rating: 0.10
 
 recommendations_discovery:
   # TMDB's /recommendations endpoint sweep settings
@@ -52,14 +51,6 @@ rate_limiting:
   min_interval_seconds: 0.15
   max_retries: 5
   export_pace_seconds: 1.0  # separate, gentler pace for the large daily-export downloads
-
-apis:
-  tmdb_api_key: ${TMDB_API_KEY}
-  omdb_api_key: ${OMDB_API_KEY}
-  reddit:
-    client_id: ${REDDIT_CLIENT_ID}
-    client_secret: ${REDDIT_CLIENT_SECRET}
-    user_agent: "cinesync/0.1 by ${REDDIT_USERNAME}"
 
 thresholds:
   # Below this many ratings, Phase 4 skips that person's personal
@@ -73,11 +64,16 @@ recency:
   # number of days for finer control.
   default_half_life_days: 90
 
-# Phase 8. Normalized to 0-100 per source before weighting; weight is
-# redistributed proportionally if a source is missing for a title.
-critic_score_weights:
-  letterboxd_rating: 0.35
-  rt_critic: 0.35
-  rt_audience: 0.10
-  imdb_rating: 0.10
-  tmdb_rating: 0.10
+embeddings:
+  model: "all-MiniLM-L6-v2"
+  # IMPORTANT: if you ever swap this model, old and new embeddings are
+  # NOT comparable. Re-run Phase 2 for every title if you change this,
+  # or keep two columns (old/new) during a transition.
+
+apis:
+  tmdb_api_key: ${TMDB_API_KEY}
+  omdb_api_key: ${OMDB_API_KEY}
+  reddit:
+    client_id: ${REDDIT_CLIENT_ID}
+    client_secret: ${REDDIT_CLIENT_SECRET}
+    user_agent: "cinesync/0.1 by ${REDDIT_USERNAME}"

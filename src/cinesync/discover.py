@@ -9,10 +9,10 @@ from datetime import date
 
 def build_discover_params(
     content_type: str,
+    page: int,
     original_language: str,
-    page: int = 1,
-    min_vote_count: int = 15,
     min_runtime_minutes: int = 40,
+    min_vote_count: int = 15,
     sort_by: str = "vote_count.desc",
     date_gte: str | None = None,
     date_lte: str | None = None,

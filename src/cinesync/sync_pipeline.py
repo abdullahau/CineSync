@@ -45,17 +45,19 @@ def fetch_title_details(content_type: str, tmdb_id: int, api_key: str, session) 
 
 
 def fetch_discover_page(
-    content_type: str, language: str, page: int, api_key: str, session, **filter_kwargs
+    content_type: str, page: int, api_key: str, session, **filter_kwargs
 ) -> dict:
     """
-    One page of one language's /discover sweep. filter_kwargs are
-    passed straight to build_discover_params (min_vote_count,
-    min_runtime_minutes, sort_by, date_gte, date_lte) -- pass
-    config.yaml's discover_filter values plus the current window's
-    date bounds here explicitly.
+    One page of tmdb /discover sweep. filter_kwargs are filter params
+    passed straight to build_discover_params (original_language,
+    min_runtime_minutes, min_vote_count, sort_by, date_gte, date_lte)
+    -- build config.yaml's discover_sweep values into params and add
+    the current window's date bounds here explicitly.
     """
     url = f"{TMDB_BASE}/discover/{content_type}"
-    params = build_discover_params(content_type, language, page=page, **filter_kwargs)
+    params = build_discover_params(
+        content_type=content_type, page=page, **filter_kwargs
+    )
     headers = {
         "accept": "application/json",
         "Authorization": f"Bearer {api_key}",

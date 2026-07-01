@@ -70,7 +70,14 @@ def split_window(gte: str, lte: str):
 
 
 def resolve_windows_under_cap(
-    probe_total_pages, date_gte, date_lte, chunk_years=10, max_iterations=2000
+    probe_total_pages,
+    date_gte,
+    date_lte,
+    content_type,
+    probe_session,
+    chunk_years=10,
+    max_iterations=2000,
+    **params,
 ):
     """
     Turn a broad date range into a list of (gte, lte) windows that each
@@ -106,7 +113,10 @@ def resolve_windows_under_cap(
                 "resolve_windows_under_cap exceeded max_iterations -- probe_total_pages may be misbehaving"
             )
         gte, lte = todo.pop()
-        if probe_total_pages(gte, lte) <= TMDB_MAX_PAGES:
+        if (
+            probe_total_pages(gte, lte, content_type, probe_session, **params)
+            <= TMDB_MAX_PAGES
+        ):
             resolved.append((gte, lte))
         else:
             halves = split_window(gte, lte)
