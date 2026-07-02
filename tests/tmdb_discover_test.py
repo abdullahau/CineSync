@@ -1,15 +1,13 @@
-import os
 from datetime import date
 import requests
-from dotenv import load_dotenv
 from cinesync.utils.net import force_ipv4
 from cinesync.paths import DATA_DIR
+from cinesync.config_loader import load_config
 
-load_dotenv(".env")
 force_ipv4()
+apikey = load_config()["apis"]["tmdb_api_key"]
 
 content_type = "movie"  # "movie", "tv"
-
 
 url = f"https://api.themoviedb.org/3/discover/{content_type}"
 
@@ -35,7 +33,7 @@ else:
 
 headers = {
     "accept": "application/json",
-    "Authorization": f"Bearer {os.getenv('TMDB_API_KEY')}",
+    "Authorization": f"Bearer {apikey}",
 }
 
 response = requests.get(url, headers=headers, params=params)

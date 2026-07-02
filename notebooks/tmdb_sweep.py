@@ -94,12 +94,8 @@ for filters in lang_filters:
         )
         print(f"\nResolved {len(windows)} date windows")
 
-        total_discovered = (
-            0  # titles the sweep SAW (should reconcile ~ probe_total_results)
-        )
-        total_fetched = (
-            0  # titles actually detail-fetched + written (excludes already_known)
-        )
+        total_discovered = 0
+        total_fetched = 0
         total_already_known = 0
 
         for gte, lte in windows:
