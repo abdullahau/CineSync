@@ -28,6 +28,12 @@ recommend(mood="surreal political", novelty=0.7, min_critic_score=60,
           recency_half_life="2w")
 ```
 
+(buzz_window is good, but I want to be able to state where I want something "buzzing" or not.)
+
+(Consider adding "certificate/rating" filter to ensure movies are, as per US standards, at maximum of age rating)
+
+(consider creating a quarterly or monthly "wrapped" - like top movies, genres, themes, aesthetic - similar to spotify wrap)
+
 ### Hard constraints / cross-cutting values
 - Works for **1 person, a couple, or a group** — never hardcoded to two people (long-format tables looping over a `people` list).
 - Covers **both movies and TV** — TV at **series level only** (no per-episode rows). `content_type` is just another column, not a separate pipeline.
@@ -44,7 +50,11 @@ recommend(mood="surreal political", novelty=0.7, min_critic_score=60,
 - **SQLite** + **pandas**. SQLite is the source of truth (schema is genuinely relational: FKs, junction tables, feedback→recommendation link). Parquet reserved for later derived numeric matrices (Phase 2 embeddings). pandas over polars to minimize unfamiliar-library friction while also learning UMAP/LightGBM/PyTorch.
 - **Planned ML libs:** sentence-transformers (`all-MiniLM-L6-v2`, pinned), scikit-learn, umap-learn, hdbscan, lightgbm, torch, plotly.
 - **`numba>=0.59` pinned** in pyproject to resolve a Python-3.12 resolver conflict pulled in transitively via umap-learn — without it, `uv sync` fails.
-- **APIs/sources:** TMDB (metadata, discover, recommendations, daily exports), OMDb (IMDb rating + RT critic + awards text), Wikidata/Wikipedia (detailed plot + structured awards), Reddit via PRAW (buzz). RT-audience & Letterboxd require scraping (flagged fragile).
+- **APIs/sources:** TMDB (metadata, discover, recommendations, daily exports/popularity), OMDb (IMDb rating + RT critic + awards text + certificate rating?), Wikidata/Wikipedia (detailed plot + structured awards), Reddit via PRAW (buzz). RT-audience & Letterboxd require scraping (flagged fragile). Letterboxd offers a way to reach a movie (not TV) page using TMDB ID using the url: https://letterboxd.com/tmdb/{tmdb_id}, OR IMDB ID using the url: https://letterboxd.com/imdb/{imdb_id}
+
+(Rotten Tomato links for each title can be potentially extracted from Wikidata Query SPARQL)
+
+(Figure out a way to pass cloudflare and other human tests on both RT & Letterboxd. From RT extract critic tomatometer & audience popcornmeter. From Letterboxd extract "watched", "appears_on_list", "hearted/liked", "total_rating", "weighted_average_score", "plot_values" for score distribution)
 
 ---
 
@@ -197,3 +207,16 @@ The most involved runtime flow — combines threading, pagination, and date-wind
 
 ## 9. People & taste profile
 - `person_1` = Abdullah, `person_2` = Rehab. Taste: world cinema (Japanese, Korean, Hindi, French, and more — see the 15-language config), period pieces, mind-bending mystery/horror, and creative niche/boundary-pushing films with social/political themes in surreal styles.
+
+
+## Notes
+
+Running this command creates a flattened table for review
+```bash
+sqlite3 data/cinesync.db < data/table_flat.sql 
+```
+
+Clean unused spaces in side a sqlite DB:
+```bash
+sqlite3 data/cinesync.db "VACUUM;"
+```

@@ -28,7 +28,7 @@ param_keys = [
     "date_lte",
 ]
 
-MAX_WORKERS = 10
+MAX_WORKERS = 17
 
 
 # Multithread Helper Functions

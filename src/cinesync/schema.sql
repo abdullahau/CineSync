@@ -31,6 +31,11 @@ CREATE TABLE titles (
     date_added         TEXT DEFAULT (datetime('now')), -- immutable
     last_refreshed     TEXT DEFAULT (datetime('now')) -- mutable -- when metadata was last verified/re-fetched.
 );
+-- OMDb's "full" plot summary
+-- OMDb or TMDB's certificate rating?
+-- OMDb's "movie" box office figures?
+-- Ignore OMDb's writer, director, and actors credit?
+-- Ignore OMDb's metascore? 
 
 -- Genres (titles 1:M title_genres)
 CREATE TABLE title_genres (

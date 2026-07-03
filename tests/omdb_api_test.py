@@ -10,9 +10,9 @@ apikey = load_config()["apis"]["omdb_api_key"]
 
 url = "http://www.omdbapi.com/"
 
-imdb_id = "tt0903747"
+imdb_id = "tt0363226"
 
-params = {"apikey": apikey, "i": imdb_id}
+params = {"apikey": apikey, "i": imdb_id, "plot": "full", "tomatoes": "true"}
 
 response = requests.get(url, params=params)
 
