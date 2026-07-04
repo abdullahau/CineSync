@@ -5,7 +5,6 @@ description = "Local movie/TV recommendation system for individuals, couples, or
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
-    "beautifulsoup4>=4.15.0",
     "curl-cffi>=0.15.0",
     "dotenv>=0.9.9",
     "ipykernel>=7.3.0",
@@ -16,6 +15,7 @@ dependencies = [
     "pyyaml>=6.0.3",
     "requests>=2.34.2",
     "scikit-learn>=1.9.0",
+    # "beautifulsoup4>=4.15.0",    
     # "praw",
     # "scikit-learn",
     # "sentence-transformers",
@@ -32,13 +32,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cinesync"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"src/cinesync/schema.sql" = "cinesync/schema.sql"
-
-[project.scripts]
-cinesync-init-db = "cinesync.init_db:init_db"
-tmdb-parser = "cinesync.tmdb_parser:tmdb_parser"
 
 [tool.ruff]
 line-length = 88

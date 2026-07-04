@@ -4,7 +4,8 @@ config.yaml
 
 # Database
 data/cinesync.db
-data/cinesync.db.bak
+data/backup/*
+!data/backup/.gitkeep
 data/cinesync_flat.db
 data/tmdb_popularity/
 

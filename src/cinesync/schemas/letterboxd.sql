@@ -5,8 +5,8 @@ CREATE TABLE letterboxd_movie_stats (
 
     -- Aggregate ratings
     rating_value REAL,
-    rating_count INTEGER NOT NULL,
-    review_count INTEGER NOT NULL,
+    rating_count INTEGER,
+    review_count INTEGER,
 
     -- Rating distribution (number of ratings in each bucket)
     rating_0_5_count INTEGER NOT NULL DEFAULT 0,

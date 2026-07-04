@@ -73,7 +73,7 @@ def paced_get(
     url: str,
     params: dict,
     headers: dict,
-    min_interval: float = 0.15,
+    min_interval: float = 0.05,
     max_retries: int = 5,
 ):
     """

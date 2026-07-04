@@ -13,8 +13,17 @@ people:
   # - id: person_3
   #   name: "Add more rows here for additional group members"
 
+discover_vote_count:
+  min_vote_count: 50
+  min_runtime_minutes: 40
+
+discover_rating:
+  min_rating: 65
+  min_vote_count: 10
+  min_runtime_minutes: 40
+
 # [language, runtime_gte, vote_count_gte, date_gte, date_lte]
-discover_sweep:
+discover_lang:
   - [en, 40, 15, "1940-01-01", "2026-12-31"]    # English
   - [ko, 40, 10, "1940-01-01", "2026-12-31"]    # Korean
   - [ja, 40, 10, "1940-01-01", "2026-12-31"]    # Japanese
