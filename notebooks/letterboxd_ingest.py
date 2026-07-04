@@ -7,8 +7,8 @@ import time
 from datetime import datetime, timezone
 import curl_cffi.requests as requests
 from parsel import Selector
-from cinesync.sync_pipeline import known_tmdb_ids
 from cinesync.paths import DATA_DIR
+from cinesync.ingestion.db_crud import known_tmdb_ids
 
 # ---------------------------------------------------------------------------
 # Config
@@ -178,8 +178,6 @@ async def get_letterboxd_data(tmdb_id: int, semaphore: asyncio.Semaphore):
             log_failure(tmdb_id, type(e).__name__, str(e))
             return None
         finally:
-            # Always pace ourselves, success or failure — a burst of fast
-            # failures (e.g. many 404s in a row) is still a burst.
             await asyncio.sleep(random.uniform(*DELAY_RANGE))
 
 
@@ -214,6 +212,7 @@ async def main():
     all_tmdb_ids = known_tmdb_ids(conn, content_type="movie")
     conn.close()
 
+    # Move to cinesync.ingestion.db_crud
     conn_letterboxd = sqlite3.Connection(DATA_DIR / "letterboxd.db")
     conn_letterboxd.execute("PRAGMA journal_mode=WAL;")
 

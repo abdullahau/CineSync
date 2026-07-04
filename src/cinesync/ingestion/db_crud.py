@@ -102,6 +102,14 @@ def upsert_parsed_title(conn: sqlite3.Connection, parsed: dict) -> bool:
     return is_new
 
 
+def known_tmdb_ids(conn, content_type: str) -> set:
+    """Loaded once per notebook session, reused across the whole sweep -- not re-queried per page."""
+    rows = conn.execute(
+        "SELECT tmdb_id FROM titles WHERE content_type = ?", (content_type,)
+    ).fetchall()
+    return {r[0] for r in rows}
+
+
 # TODO: OMDb (omdb_awards_text and external_score) & Wikipedia (title_awards and detailed_plot) upsert.
 
 

@@ -8,9 +8,9 @@ force_ipv4()
 apikey = load_config()["apis"]["tmdb_api_key"]
 
 content_type = "movie"  # "movie", "tv"
-tmdb_id = 1122584
+tmdb_id = 29775
 
-path = DATA_DIR / "tmdb_response_sample" / content_type
+path = DATA_DIR / "tmdb_detail_sample" / content_type
 
 url = f"https://api.themoviedb.org/3/{content_type}/{tmdb_id}?append_to_response=keywords,credits,external_ids"
 
