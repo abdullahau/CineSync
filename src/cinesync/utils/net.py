@@ -1,3 +1,4 @@
+import requests
 import socket
 import time
 from cinesync.config_loader import load_config
@@ -25,13 +26,36 @@ def paced_get(
     Retry-After header on a 429 rather than guessing a wait time.
     """
     config = load_config()["rate_limiting"]
-    min_interval, max_retries = config["min_interval"], config["max_retries"]
+    min_interval, max_retries, timeout = (
+        config["min_interval"],
+        config["max_retries"],
+        config["timeout"],
+    )
     for attempt in range(max_retries):
-        response = session.get(url, params=params, headers=headers)
-        if response.status_code == 429:
-            wait = float(response.headers.get("Retry-After", 2**attempt))
+        try:
+            response = session.get(
+                url, params=params, headers=headers, timeout=tuple(timeout)
+            )
+        except (
+            requests.exceptions.Timeout,
+            requests.exceptions.ConnectionError,
+        ) as exc:
+            wait = 2**attempt
+            print(
+                f"    [paced_get] {type(exc).__name__} on {url} "
+                f"(attempt {attempt + 1}/{max_retries}), retrying in {wait}s"
+            )
             time.sleep(wait)
             continue
+
+        if response.status_code == 429:
+            wait = float(response.headers.get("Retry-After", 2**attempt))
+            print(
+                f"    [paced_get] 429 on {url} "
+                f"(attempt {attempt + 1}/{max_retries}), sleeping {wait}s"
+            )
+            time.sleep(wait)
+            continue
+
         time.sleep(min_interval)
         return response
-    raise RuntimeError(f"Exceeded {max_retries} retries for {url}")

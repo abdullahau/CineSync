@@ -7,14 +7,14 @@ from cinesync.config_loader import load_config
 force_ipv4()
 apikey = load_config()["apis"]["tmdb_api_key"]
 
-content_type = "movie"  # "movie", "tv"
+content_type = "tv"  # "movie", "tv"
 
 url = f"https://api.themoviedb.org/3/discover/{content_type}"
 
 params = {
     "include_adult": "false",
-    "vote_count.gte": 50,
-    # "sort_by": "vote_count.desc",
+    "vote_count.gte": 10,
+    "vote_average.gte": 6.5,
     "page": 1,
 }
 

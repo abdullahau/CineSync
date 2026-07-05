@@ -1,4 +1,4 @@
-import sqlite3, requests, threading
+import sqlite3, requests, threading, time
 from datetime import date
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -15,7 +15,7 @@ config = load_config()
 tmdb_api_key = config["apis"]["tmdb_api_key"]
 conn = sqlite3.Connection(DATA_DIR / "cinesync.db")
 
-MAX_WORKERS = 17
+MAX_WORKERS = 10
 CEILING = f"{date.today().year}-12-31"
 
 
@@ -36,9 +36,7 @@ def fetch_only(tmdb_id, content_type, source, thread_local):
 
 
 def probe_window(gte, lte, content_type, session, **params):
-    """The probe callable resolve_windows_under_cap expects: fetch page 1
-    of a candidate window and report (total_pages, total_results), so
-    the caller never has to re-fetch page 1 again just to learn them."""
+    """fetch page 1 of a candidate window and report (total_pages, total_results)"""
     payload = fetch_discover_page(
         content_type, 1, tmdb_api_key, session, date_gte=gte, date_lte=lte, **params
     )
@@ -63,7 +61,7 @@ def run_sweep(content_type, params, source_label, date_gte=None):
             content_type, 1, tmdb_api_key, probe_session, date_lte=CEILING, **params
         )
         date_gte = earliest_date(floor_probe, content_type) or "1900-01-01"
-    print(f"Range: {date_gte} .. {CEILING}")
+    print(f"Range: {date_gte} to {CEILING}")
 
     control = fetch_discover_page(
         content_type,
@@ -91,6 +89,7 @@ def run_sweep(content_type, params, source_label, date_gte=None):
         pages = min(reported, 500)
         total_discovered += win_results
         print(f"  window {gte}..{lte}: {win_results} titles, {pages} pages")
+        window_start = time.monotonic()
 
         for page in range(1, pages + 1):
             payload = fetch_discover_page(
@@ -104,7 +103,9 @@ def run_sweep(content_type, params, source_label, date_gte=None):
             )
             to_fetch = [e["id"] for e in payload["results"] if e["id"] not in known_ids]
             total_already_known += len(payload["results"]) - len(to_fetch)
+            print(f"    page {page}/{pages}: {len(to_fetch)} new titles to fetch...")
 
+            page_fetched = page_failed = 0
             with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
                 futures = {
                     pool.submit(
@@ -113,11 +114,26 @@ def run_sweep(content_type, params, source_label, date_gte=None):
                     for tid in to_fetch
                 }
                 for fut in as_completed(futures):
-                    futures.pop(fut)
-                    tmdb_id, parsed = fut.result()
+                    tmdb_id = futures.pop(fut)
+                    try:
+                        tmdb_id, parsed = fut.result()
+                    except Exception as exc:
+                        page_failed += 1
+                        print(
+                            f"    ! failed tmdb_id={tmdb_id}: {type(exc).__name__}: {exc}"
+                        )
+                        continue
                     upsert_parsed_title(conn, parsed)
                     known_ids.add(tmdb_id)
                     total_fetched += 1
+                    page_fetched += 1
+
+            elapsed = time.monotonic() - window_start
+            rate = total_fetched / elapsed if elapsed > 0 else 0
+            print(
+                f"    page {page}/{pages} done: {page_fetched} fetched, {page_failed} failed  "
+                f"|  {elapsed:.0f}s elapsed this window, {rate:.1f} titles/s"
+            )
 
     print(f"--- reconciliation ({source_label}/{content_type}) ---")
     print(
@@ -134,21 +150,29 @@ def run_sweep(content_type, params, source_label, date_gte=None):
 # ============================= driver =============================
 sweeps = config["tmdb_discover"]
 
+jobs = []  # (content_type, params, source_label, date_gte)
+
 for content_type in ("movie", "tv"):
-    run_sweep(content_type, dict(sweeps["votes"]), "discover_votes")
+    jobs.append((content_type, dict(sweeps["votes"]), "discover_votes", None))
 
 for content_type in ("movie", "tv"):
     r = sweeps["rating"]
     params = {"min_rating": r["min_rating"], "min_vote_count": r["min_vote_count"]}
-    run_sweep(content_type, params, "discover_rating")
+    jobs.append((content_type, params, "discover_rating", None))
 
 for lang_cfg in sweeps["lang"]:
     lang = lang_cfg["lang"]
     for content_type in ("movie", "tv"):
         params = {"lang": lang, "min_vote_count": lang_cfg["min_vote_count"]}
-        run_sweep(
-            content_type,
-            params,
-            f"discover_lang_{lang}",
-            date_gte=lang_cfg["min_release"],
+        jobs.append(
+            (content_type, params, f"discover_lang_{lang}", lang_cfg["min_release"])
         )
+
+for content_type, params, source_label, date_gte in jobs:
+    try:
+        run_sweep(content_type, params, source_label, date_gte=date_gte)
+    except Exception as exc:
+        print(
+            f"\n!!! {source_label}/{content_type} FAILED: {type(exc).__name__}: {exc}"
+        )
+        print("!!! continuing to next sweep\n")
