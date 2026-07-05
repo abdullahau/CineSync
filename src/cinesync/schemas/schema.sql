@@ -178,14 +178,14 @@ WHERE t.title_id NOT IN (SELECT DISTINCT title_id FROM watch_events);
 
 -- Recommendation shown to user groups
 CREATE TABLE recommendations (
-    recommendation_id       TEXT PRIMARY KEY,    -- uuid, generated at recommend() call time
+    recommendation_id       TEXT PRIMARY KEY,   -- uuid, generated at recommend() call time
     title_id                TEXT NOT NULL REFERENCES titles(title_id),
     generated_at            TEXT DEFAULT (datetime('now')),
     mode                    TEXT,               -- 'personal_fit','mood','buzz','novelty','blended'
     mood_query              TEXT,
     novelty_dial            REAL,
-    recency_half_life_days  REAL,            -- numeric value to track recency dial
-    buzz_window             TEXT,            -- 'daily' / 'weekly' -- a real scoring input, same
+    recency_half_life_days  REAL,               -- numeric value to track recency dial
+    buzz_window             TEXT,               -- 'daily' / 'weekly' -- a real scoring input, same
     min_critic_score        REAL,
     aggregation_mode        TEXT,               -- 'mean','min','harmonic_mean','show_all'
     score_breakdown_json    TEXT                -- raw per-person/per-signal scores, for debugging

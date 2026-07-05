@@ -213,7 +213,7 @@ The most involved runtime flow — combines threading, pagination, and date-wind
 
 Running this command creates a flattened table for review
 ```bash
-sqlite3 data/cinesync.db < data/table_flat.sql 
+sqlite3 data/cinesync.db < src/cinesync/schemas/table_flat.sql
 ```
 
 Clean unused spaces in side a sqlite DB:
@@ -224,4 +224,9 @@ sqlite3 data/cinesync.db "VACUUM;"
 Export `.env` variables into a terminal session:
 ```bash
 export $(cat .env | xargs)
+```
+
+or 
+```bash
+uv run --env-file .env <file.py>
 ```
