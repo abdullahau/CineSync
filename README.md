@@ -41,7 +41,7 @@ Then open `config.yaml` and:
   no episode rows.
 - **`title_genres` / `title_credits`** are junction tables because
   genres and cast/director/writer are multi-valued per title.
-- **`external_scores`** keeps each rating source (Letterboxd, RT
+- **`title_scores`** keeps each rating source (Letterboxd, RT
   critic, RT audience, IMDb) separate so the weighted blend in
   `config.yaml` can change later without re-scraping anything.
 - **`recommendations` + `feedback`** are linked by

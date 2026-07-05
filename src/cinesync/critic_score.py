@@ -17,7 +17,7 @@ def critic_score(scores: dict, weights: dict = None):
     """
     scores: {source_name: score_value} for whichever sources exist for
             this title -- e.g. from
-            `SELECT source, score FROM external_scores WHERE title_id = ?`.
+            `SELECT source, score FROM title_scores WHERE title_id = ?`.
             Sources with no row at all simply aren't keys in this dict.
     weights: defaults to config.yaml's critic_score_weights.
 

@@ -15,7 +15,7 @@ Upsert semantics, per table:
     not pruning stale rows for v1 rather than diffing the full set.
   - title_keywords: full replace (DELETE then re-INSERT) Keywords change
     over time and directly drive theme/mood matching
-  - external_scores: upsert (overwrite the score/sample_size in place)
+  - title_scores: upsert (overwrite the score/sample_size in place)
     -- this table is explicitly designed to hold only the current
     value per (title_id, source), per its own schema comment.
 """
@@ -41,7 +41,7 @@ def upsert_parsed_title(conn: sqlite3.Connection, parsed: dict) -> bool:
             """INSERT INTO titles
                (title_id, tmdb_id, content_type, name, original_language, release_year,
                 runtime_minutes, number_of_seasons, status, imdb_id, wikidata_id,
-                overview, detailed_plot, source)
+                tmdb_overview, detailed_plot, source)
                VALUES (:title_id, :tmdb_id, :content_type, :name, :original_language,
                        :release_year, :runtime_minutes, :number_of_seasons, :status,
                        :imdb_id, :wikidata_id, :overview, :detailed_plot, :source)""",
@@ -54,7 +54,7 @@ def upsert_parsed_title(conn: sqlite3.Connection, parsed: dict) -> bool:
                  name=:name, original_language=:original_language, release_year=:release_year,
                  runtime_minutes=:runtime_minutes, number_of_seasons=:number_of_seasons,
                  status=:status, imdb_id=:imdb_id, wikidata_id=:wikidata_id,
-                 overview=:overview, last_refreshed=datetime('now')
+                 tmdb_overview=:overview, last_refreshed=datetime('now')
                WHERE title_id=:title_id""",
             t,
         )
@@ -87,10 +87,10 @@ def upsert_parsed_title(conn: sqlite3.Connection, parsed: dict) -> bool:
             (title_id, ce["job"], ce["name"], ce["department"]),
         )
 
-    if parsed["external_score"] is not None:
-        es = parsed["external_score"]
+    if parsed["score"] is not None:
+        es = parsed["score"]
         conn.execute(
-            """INSERT INTO external_scores (title_id, source, score, sample_size)
+            """INSERT INTO title_scores (title_id, source, score, sample_size)
                VALUES (?, ?, ?, ?)
                ON CONFLICT(title_id, source) DO UPDATE SET
                  score=excluded.score, sample_size=excluded.sample_size,
@@ -110,7 +110,7 @@ def known_tmdb_ids(conn, content_type: str) -> set:
     return {r[0] for r in rows}
 
 
-# TODO: OMDb (omdb_awards_text and external_score) & Wikipedia (title_awards and detailed_plot) upsert.
+# TODO: OMDb (omdb_awards_text and title_score) & Wikipedia (title_awards and detailed_plot) upsert.
 
 
 def record_recommendation_link(

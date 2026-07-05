@@ -101,8 +101,8 @@ Lives at `src/cinesync/schema.sql`. Created via `uv run cinesync-init-db`.
 - **`current_ratings`** (VIEW) — latest rating + last-watched date per (person, title). Derived, can't drift.
 
 ### Scores & signals
-- **`external_scores`** `(title_id, source, score 0-100, sample_size, date_pulled)` — `source ∈ {letterboxd_rating, rt_critic, rt_audience, imdb_rating, tmdb_rating}`. Overwrite-on-refresh. Missing source = no row; the blend rescales remaining weights, never backfills.
-- **`title_buzz_snapshots`** `(title_id, source, snapshot_date, value)` — **time series**. `source ∈ {tmdb_popularity, reddit_mentions}`. Needs a baseline to detect a spike.
+- **`title_scores`** `(title_id, source, score 0-100, sample_size, date_pulled)` — `source ∈ {letterboxd_rating, rt_critic, rt_audience, imdb_rating, tmdb_rating}`. Overwrite-on-refresh. Missing source = no row; the blend rescales remaining weights, never backfills.
+- **`title_popularity`** `(title_id, source, snapshot_date, value)` — **time series**. `source ∈ {tmdb_popularity, reddit_mentions}`. Needs a baseline to detect a spike.
 - **`title_awards`** `(title_id, award_name, result, year, source)` — `result ∈ {won, nominated}`, from Wikidata P166/P1411. Low-confidence supplementary signal.
 
 ### Recommendation discovery & output
@@ -118,15 +118,15 @@ Lives at `src/cinesync/schema.sql`. Created via `uv run cinesync-init-db`.
 - **`paths.py`** — `PROJECT_ROOT`, `DATA_DIR`, `NOTEBOOKS_DIR`.
 - **`config_loader.py`** — `load_config()`; substitutes `${ENV_VAR}` placeholders (whole-value or embedded), raises clearly if unset.
 - **`init_db.py`** — `init_db()`, exposed as console script `cinesync-init-db`; loads `schema.sql` via `importlib.resources`. Won't overwrite an existing DB.
-- **`tmdb_parser.py`** — `parse_tmdb_response(data, content_type, source)` → dict of rows for every table (`title`, `genres`, `keywords`, `companies`, `credits`, `crew_extra`, `external_score`). Handles all movie/TV shape differences (keywords key `keywords` vs `results`; TV runtime fallback to `last_episode_to_air`; `created_by` for TV creators; crew dedup; TMDB score 0-10→0-100; `external_ids` for imdb/wikidata). Call TMDB with `?append_to_response=keywords,credits,external_ids` for both types.
-- **`db_writer.py`** — `upsert_parsed_title()` (insert-or-refresh, returns is_new; **keywords full-replace**, other junctions INSERT OR IGNORE, external_scores upsert), `record_recommendation_link()`, `seed_already_processed()`.
+- **`tmdb_parser.py`** — `parse_tmdb_response(data, content_type, source)` → dict of rows for every table (`title`, `genres`, `keywords`, `companies`, `credits`, `crew_extra`, `title_scores`). Handles all movie/TV shape differences (keywords key `keywords` vs `results`; TV runtime fallback to `last_episode_to_air`; `created_by` for TV creators; crew dedup; TMDB score 0-10→0-100; `external_ids` for imdb/wikidata). Call TMDB with `?append_to_response=keywords,credits,external_ids` for both types.
+- **`db_writer.py`** — `upsert_parsed_title()` (insert-or-refresh, returns is_new; **keywords full-replace**, other junctions INSERT OR IGNORE, title_scores upsert), `record_recommendation_link()`, `seed_already_processed()`.
 - **`discover.py`** — `build_discover_params(content_type, original_language, ..., date_gte=None, date_lte=None)` + `paced_get()` (self-throttle, 429 backoff via `Retry-After`).
   - **Branches on `content_type`**: movies use `primary_release_date.gte/.lte`, `with_runtime.gte`, `include_video`; TV uses `first_air_date.gte/.lte` and **omits runtime + include_video** (TV `with_runtime` filters by often-empty `episode_run_time`, silently dropping shows like Breaking Bad).
   - Uses `with_original_language` (content filter), NOT `language` (translation only). No `vote_average` floor.
   - Date params **only included when non-None** (a None value would send a broken URL param). No years-ago fallback anymore — the caller supplies bounds.
 - **`date_windows.py`** — solves TMDB's **hard 500-page pagination cap**. `initial_windows()` (coarse year chunks), `split_window()` (halve a window by date), `resolve_windows_under_cap(probe_total_pages, date_gte, date_lte, chunk_years=10)` (adaptively splits any window still >500 pages via an injected probe callable; accepts full 'YYYY-MM-DD' strings, converts years to int internally), `date_param_names()`.
 - **`sync_pipeline.py`** — notebook-driven fetch primitives (loop lives in the notebook, not here): `known_tmdb_ids`, `fetch_title_details`, `fetch_discover_page` (passes `**filter_kwargs` incl. date bounds straight through to `build_discover_params`), `fetch_recommendations_page`, `process_one_candidate`, `get_highly_rated_seed_titles`.
-- **`tmdb_export_ingest.py`** — daily ID export → `title_buzz_snapshots` (tmdb_popularity). Watermark-resumable (`MAX(snapshot_date)`), `export_start ∈ {"watermark","full"}`, 90-day retention clamp, streams the gzip line-by-line.
+- **`tmdb_export_ingest.py`** — daily ID export → `title_popularity` (tmdb_popularity). Watermark-resumable (`MAX(snapshot_date)`), `export_start ∈ {"watermark","full"}`, 90-day retention clamp, streams the gzip line-by-line.
 - **`recency.py`** — `recency_weight(watched_date, half_life_days)` = `0.5 ** (days_since / half_life)` + presets (`2d`…`lifetime`).
 - **`critic_score.py`** — `critic_score(scores, weights)` weighted blend; missing sources excluded and remaining weights rescaled to sum to 1; returns None if nothing available.
 
@@ -176,7 +176,7 @@ The most involved runtime flow — combines threading, pagination, and date-wind
 - No `vote_average` floor on discovery — low average can mean "niche/polarizing," which the project wants. Quality filtering belongs in `recommend()`'s `min_critic_score`.
 
 **Signals**
-- Three-tier model: `vote_average` = cumulative *sentiment* (overwrite); `popularity`/Reddit mentions = *attention*, needs time-series baseline (`title_buzz_snapshots`); `/trending` & Letterboxd popular = already short-window/curated, fetched live, not stored.
+- Three-tier model: `vote_average` = cumulative *sentiment* (overwrite); `popularity`/Reddit mentions = *attention*, needs time-series baseline (`title_popularity`); `/trending` & Letterboxd popular = already short-window/curated, fetched live, not stored.
 - Recency = exponential half-life decay (adjustable), not a hard cutoff. Composes with rewatch-as-evidence in Phase 4's LightGBM `sample_weight`.
 - Rewatch is a real behavioral signal; multiple `watch_events` rows feed a derived count/weight rather than complicating `current_ratings`.
 - Critic blend rescales weights for missing sources (never zero-fills or averages-backfills).
@@ -195,7 +195,7 @@ The most involved runtime flow — combines threading, pagination, and date-wind
 
 **Not yet built:**
 1. **Letterboxd import** — `ratings.csv`/`diary.csv` → `watch_events` (+ TMDB `/search` resolution with a manual-review fallback for unmatched titles — "accept the gap": log unmatched to a side file, don't guess).
-2. **OMDb + Wikidata enrichment** — populate `external_scores` (imdb/rt), `omdb_awards_text`, `title_awards`, `detailed_plot`.
+2. **OMDb + Wikidata enrichment** — populate `title_scores` (imdb/rt), `omdb_awards_text`, `title_awards`, `detailed_plot`.
 3. The Phase 1 / 1b **notebooks** as saved artifacts (loops currently live in scratch cells).
 4. Everything Phase 2 onward.
 
@@ -219,4 +219,9 @@ sqlite3 data/cinesync.db < data/table_flat.sql
 Clean unused spaces in side a sqlite DB:
 ```bash
 sqlite3 data/cinesync.db "VACUUM;"
+```
+
+Export `.env` variables into a terminal session:
+```bash
+export $(cat .env | xargs)
 ```

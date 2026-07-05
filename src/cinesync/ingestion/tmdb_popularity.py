@@ -1,10 +1,10 @@
 """
-TMDB daily ID export ingestion -- builds title_buzz_snapshots
+TMDB daily ID export ingestion -- builds title_popularity
 (source='tmdb_popularity') for every title already in your `titles`
 table, using TMDB's bulk daily export files.
 
 Every run sweeps every date between watermark (MAX(snapshot_date)
-already in title_buzz_snapshots) and today, checking against your
+already in title_popularity) and today, checking against your
 COMPLETE CURRENT titles table each time.
 """
 
@@ -35,7 +35,7 @@ def watermark_date(conn: sqlite3.Connection) -> date:
     to the oldest date TMDB still has available.
     """
     row = conn.execute(
-        "SELECT MAX(snapshot_date) FROM title_buzz_snapshots WHERE source = 'tmdb_popularity'"
+        "SELECT MAX(snapshot_date) FROM title_popularity WHERE source = 'tmdb_popularity'"
     ).fetchone()
     if row[0] is None:
         return date.today() - timedelta(days=EXPORT_RETENTION_DAYS)
@@ -79,7 +79,7 @@ def ingest_export_file(
     Streams the gz file line by line -- never loads the full
     decompressed content into memory at once. Keeps only entries whose
     title_id is already in your titles table. Safe to call twice on
-    the same file/date: INSERT OR IGNORE relies on title_buzz_snapshots'
+    the same file/date: INSERT OR IGNORE relies on title_popularity'
     (title_id, source, snapshot_date) primary key for idempotency.
     """
     title_prefix = "movie_" if content_type == "movie" else "tv_"
@@ -94,7 +94,7 @@ def ingest_export_file(
             if title_id not in known_ids:
                 continue
             cur = conn.execute(
-                "INSERT OR IGNORE INTO title_buzz_snapshots (title_id, source, snapshot_date, value) "
+                "INSERT OR IGNORE INTO title_popularity (title_id, source, snapshot_date, value) "
                 "VALUES (?, 'tmdb_popularity', ?, ?)",
                 (title_id, snapshot_date, entry["popularity"]),
             )

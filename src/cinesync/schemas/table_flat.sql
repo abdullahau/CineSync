@@ -36,7 +36,7 @@ scores_agg AS (
         MAX(CASE WHEN source = 'rt_audience'       THEN score END) AS rt_audience,
         MAX(CASE WHEN source = 'imdb_rating'       THEN score END) AS imdb_rating,
         MAX(CASE WHEN source = 'tmdb_rating'       THEN score END) AS tmdb_rating
-    FROM external_scores
+    FROM title_scores
     GROUP BY title_id
 )
 SELECT
