@@ -7,18 +7,15 @@ import time
 from datetime import datetime, timezone
 import curl_cffi.requests as requests
 from parsel import Selector
-from cinesync.paths import DATA_DIR
-from cinesync.ingestion.db_crud import known_tmdb_ids
+from cinesync.paths import DATA_DIR, LOGS_DIR
 
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
-CONCURRENCY = 8  # start conservative, see optimization notes below
+
+CONCURRENCY = 8
 DELAY_RANGE = (0.5, 1.5)  # jitter after every request (success OR failure)
 COMMIT_EVERY = 25  # batch commits instead of one per row
 PROGRESS_EVERY = 100  # print a progress/ETA line every N completions
 
-FAILURE_LOG_PATH = DATA_DIR / "letterboxd_scrape_failures.jsonl"
+FAILURE_LOG_PATH = LOGS_DIR / "letterboxd_scrape_failures.jsonl"
 
 BASE_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -30,8 +27,8 @@ BASE_HEADERS = {
 session = requests.AsyncSession(impersonate="chrome124")
 
 INSERT_SQL = """
-    INSERT OR REPLACE INTO letterboxd_movie_stats (
-        title_id, tmdb_id, name, rating_value, rating_count, review_count,
+    INSERT OR REPLACE INTO title_letterboxd_stats (
+        title_id, rating_value, rating_count, review_count,
 
         rating_0_5_count, rating_1_0_count, rating_1_5_count, rating_2_0_count,
         rating_2_5_count, rating_3_0_count, rating_3_5_count, rating_4_0_count,
@@ -40,20 +37,17 @@ INSERT_SQL = """
         watches, lists, likes, top_rank
     )
     VALUES (
-        ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?
     )
 """
 
 
-# ---------------------------------------------------------------------------
-# Failure logging — appended immediately, not batched, so a mid-run crash
-# never loses the record of what failed and why.
-# ---------------------------------------------------------------------------
-def log_failure(tmdb_id: int, error_type: str, error_msg: str) -> None:
+def log_failure(title_id: str, imdb_id: str, error_type: str, error_msg: str) -> None:
     entry = {
-        "tmdb_id": tmdb_id,
+        "title_id": title_id,
+        "imdb_id": imdb_id,
         "error_type": error_type,
         "error_message": error_msg[:300],
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -62,14 +56,14 @@ def log_failure(tmdb_id: int, error_type: str, error_msg: str) -> None:
         f.write(json.dumps(entry) + "\n")
 
 
-# ---------------------------------------------------------------------------
-# Fetch + parse a single title
-# ---------------------------------------------------------------------------
-async def get_letterboxd_data(tmdb_id: int, semaphore: asyncio.Semaphore):
+# Fetch + parse a single title (keyed by IMDb ID so TV/limited series resolve)
+async def get_letterboxd_data(
+    title_id: str, imdb_id: str, semaphore: asyncio.Semaphore
+):
     async with semaphore:
         try:
             r_main = await session.get(
-                f"https://letterboxd.com/tmdb/{tmdb_id}/",
+                f"https://letterboxd.com/imdb/{imdb_id}/",
                 headers=BASE_HEADERS,
                 timeout=15,
             )
@@ -121,9 +115,9 @@ async def get_letterboxd_data(tmdb_id: int, semaphore: asyncio.Semaphore):
                 )
 
             result = {
-                "tmdb_id": tmdb_id,
+                "title_id": title_id,
+                "imdb_id": imdb_id,
                 "slug": slug,
-                "name": ld_data.get("name"),
                 "year": ld_data.get("dateCreated", "")[:4],
                 "ratingValue": agg.get("ratingValue"),
                 "ratingCount": agg.get("ratingCount"),
@@ -140,12 +134,7 @@ async def get_letterboxd_data(tmdb_id: int, semaphore: asyncio.Semaphore):
                 count_match = re.search(r"([\d,]+)", title_attr)
                 count = int(count_match.group(1).replace(",", "")) if count_match else 0
 
-                result["histogram"].append(
-                    {
-                        "rating": label,
-                        "count": count,
-                    }
-                )
+                result["histogram"].append({"rating": label, "count": count})
 
             if r_stats.status_code == 200:
                 sel_stats = Selector(text=r_stats.text)
@@ -175,7 +164,7 @@ async def get_letterboxd_data(tmdb_id: int, semaphore: asyncio.Semaphore):
             return result
 
         except Exception as e:
-            log_failure(tmdb_id, type(e).__name__, str(e))
+            log_failure(title_id, imdb_id, type(e).__name__, str(e))
             return None
         finally:
             await asyncio.sleep(random.uniform(*DELAY_RANGE))
@@ -184,9 +173,7 @@ async def get_letterboxd_data(tmdb_id: int, semaphore: asyncio.Semaphore):
 def build_row(film: dict) -> tuple:
     hist = {h["rating"]: h["count"] for h in film["histogram"]}
     return (
-        f"movie_{film['tmdb_id']}",
-        film["tmdb_id"],
-        film["name"],
+        film["title_id"],
         film["ratingValue"],
         film["ratingCount"],
         film["reviewCount"],
@@ -208,40 +195,43 @@ def build_row(film: dict) -> tuple:
 
 
 async def main():
-    conn = sqlite3.Connection(DATA_DIR / "cinesync.db")
-    all_tmdb_ids = known_tmdb_ids(conn, content_type="movie")
-    conn.close()
+    conn = sqlite3.connect(DATA_DIR / "cinesync.db")
 
-    # Move to cinesync.ingestion.db_crud
-    conn_letterboxd = sqlite3.Connection(DATA_DIR / "letterboxd.db")
-    conn_letterboxd.execute("PRAGMA journal_mode=WAL;")
+    # Titles with no Letterboxd stats row yet — the anti-join is the resume mechanism.
+    missing_total = conn.execute(
+        """
+        SELECT COUNT(*) FROM titles t
+        WHERE NOT EXISTS (
+            SELECT 1 FROM title_letterboxd_stats s WHERE s.title_id = t.title_id
+        )
+        """
+    ).fetchone()[0]
 
-    try:
-        already_scraped = {
-            row[0]
-            for row in conn_letterboxd.execute(
-                "SELECT tmdb_id FROM letterboxd_movie_stats"
-            )
-        }
-    except sqlite3.OperationalError:
-        already_scraped = set()
+    to_scrape = conn.execute(
+        """
+        SELECT t.title_id, t.imdb_id
+        FROM titles t
+        WHERE t.imdb_id IS NOT NULL
+          AND NOT EXISTS (
+              SELECT 1 FROM title_letterboxd_stats s WHERE s.title_id = t.title_id
+          )
+        """
+    ).fetchall()
 
-    tmdb_ids = [tid for tid in all_tmdb_ids if tid not in already_scraped]
-    total = len(tmdb_ids)
-    skipped = len(all_tmdb_ids) - total
-
+    total = len(to_scrape)
+    no_imdb = missing_total - total
     print(
-        f"{len(all_tmdb_ids)} total candidates, {skipped} already scraped, "
-        f"{total} remaining."
+        f"{missing_total} titles missing Letterboxd stats; "
+        f"{no_imdb} of those have no imdb_id (skipped/gap); {total} to scrape."
     )
 
     if total == 0:
         print("Nothing to do.")
-        conn_letterboxd.close()
+        conn.close()
         return
 
     semaphore = asyncio.Semaphore(CONCURRENCY)
-    tasks = [get_letterboxd_data(tid, semaphore) for tid in tmdb_ids]
+    tasks = [get_letterboxd_data(tid, imdb, semaphore) for tid, imdb in to_scrape]
 
     success_count = 0
     fail_count = 0
@@ -252,11 +242,11 @@ async def main():
         for coro in asyncio.as_completed(tasks):
             result = await coro
             if result is not None:
-                conn_letterboxd.execute(INSERT_SQL, build_row(result))
+                conn.execute(INSERT_SQL, build_row(result))
                 success_count += 1
                 pending += 1
                 if pending >= COMMIT_EVERY:
-                    conn_letterboxd.commit()
+                    conn.commit()
                     pending = 0
             else:
                 fail_count += 1
@@ -271,8 +261,8 @@ async def main():
                     f"rate={rate:.2f}/s eta={eta_min:.1f}min"
                 )
     finally:
-        conn_letterboxd.commit()
-        conn_letterboxd.close()
+        conn.commit()
+        conn.close()
         await session.close()
 
     elapsed = time.monotonic() - start

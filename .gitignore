@@ -4,9 +4,12 @@ config.yaml
 
 # Database
 data/cinesync.db
-data/backup/
-data/logs/
 data/cinesync_flat.db
+data/cinesync.db-journal
+
+# Logs, backups, and downloads
+data/logs/
+data/backup/
 data/tmdb_popularity/
 
 # Editor files

@@ -68,7 +68,7 @@ CREATE TABLE title_crew_extra (
     PRIMARY KEY (title_id, job, name)
 );
 
--- Critic & audience scores/ratings
+-- Critic & audience scores/ratings from Rotten Tomatoes, IMDB, and TMDB
 CREATE TABLE title_scores (
     title_id    TEXT NOT NULL REFERENCES titles(title_id),
     source      TEXT NOT NULL CHECK (source IN
@@ -81,9 +81,7 @@ CREATE TABLE title_scores (
 
 -- Letterboxd ratings and stats
 CREATE TABLE title_letterboxd_stats (
-    title_id TEXT NOT NULL REFERENCES titles(title_id),
-    tmdb_id INTEGER NOT NULL UNIQUE,
-    name TEXT NOT NULL,
+    title_id TEXT NOT NULL PRIMARY KEY REFERENCES titles(title_id),
 
     -- Aggregate ratings
     rating_value REAL,
@@ -107,7 +105,7 @@ CREATE TABLE title_letterboxd_stats (
     lists INTEGER,
     likes INTEGER,
 
-    -- NULL if not in the Top 250/500 list
+    -- NULL if not in the Top 500 (movies)/Top 250 (documentary) list
     top_rank INTEGER CHECK (
         top_rank IS NULL OR
         (top_rank BETWEEN 1 AND 500)
