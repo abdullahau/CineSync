@@ -27,6 +27,8 @@ CREATE TABLE titles (
     last_refreshed     TEXT DEFAULT (datetime('now')) -- mutable -- when metadata was last verified/re-fetched.
 );
 -- OMDb's "movie" box office figures?
+-- Rotten Tomato links/url slug - extracted from Wikidata?
+-- Create a separate table for detailed plot from Wikipedia?
 
 -- Genres (titles 1:M title_genres)
 CREATE TABLE title_genres (

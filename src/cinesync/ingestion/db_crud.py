@@ -1,31 +1,48 @@
 """
-Writes a parse_tmdb_response() result into the actual database, in
-one transaction across every table it touches.
+Central CRUD layer for cinesync.db.
 
-discover -> details -> DB pipeline
+Every write into the database goes through a function here, so upsert
+semantics live in one place instead of being scattered across the
+discover/scrape notebooks. Two ingestion sources currently write:
 
-Upsert semantics, per table:
-  - titles: INSERT on first sight; on a refresh of an existing title,
-    UPDATE the mutable fields and bump last_refreshed. tmdb_id,
-    content_type, original_language never change once set.
-  - title_genres / title_companies / title_credits / title_crew_extra:
-    INSERT OR IGNORE. These are attribute lists, not single values --
-    there's no "update" to perform per row, and if TMDB's data shifts
-    slightly between refreshes (rare), we accept the simplification of
-    not pruning stale rows for v1 rather than diffing the full set.
-  - title_keywords: full replace (DELETE then re-INSERT) Keywords change
-    over time and directly drive theme/mood matching
-  - title_scores: upsert (overwrite the score/sample_size in place)
-    -- this table is explicitly designed to hold only the current
-    value per (title_id, source), per its own schema comment.
+  - TMDB details  (discover -> details -> DB):  upsert_tmdb_title()
+  - Letterboxd scrape:                          upsert_letterboxd_stats()
+
+plus TMDB /recommendations link bookkeeping.
+
+Commit policy: each function commits its own transaction, so a caller can
+treat one call as one durable unit of work.
 """
 
 import sqlite3
 
 
+# ===========================================================================
+# TMDB title metadata
+# ===========================================================================
+#
+# Upsert semantics, per table:
+#   - titles: INSERT on first sight; on a refresh of an existing title,
+#     UPDATE the mutable fields and bump last_refreshed. tmdb_id,
+#     content_type, original_language never change once set.
+#   - title_genres / title_companies / title_credits / title_crew_extra:
+#     INSERT OR IGNORE. These are attribute lists, not single values --
+#     there's no "update" to perform per row, and if TMDB's data shifts
+#     slightly between refreshes (rare), we accept the simplification of
+#     not pruning stale rows for v1 rather than diffing the full set.
+#   - title_keywords: full replace (DELETE then re-INSERT). Keywords change
+#     over time and directly drive theme/mood matching.
+#   - title_scores: upsert (overwrite the score/sample_size in place)
+#     -- this table is explicitly designed to hold only the current
+#     value per (title_id, source), per its own schema comment.
+
+
 # TODO: modify any other table/column that can be updated in the upsert function below, i.e. genres and credits (maybe?)
-def upsert_parsed_title(conn: sqlite3.Connection, parsed: dict) -> bool:
+def upsert_tmdb_title(conn: sqlite3.Connection, parsed: dict) -> bool:
     """
+    Write a parse_tmdb_response() result across every table it touches,
+    in one transaction.
+
     Returns True if this was a brand-new title (first INSERT), False
     if it already existed and was refreshed instead. Callers use this
     to decide whether a detail-fetch was "new" or just "refreshed" for
@@ -113,6 +130,11 @@ def known_tmdb_ids(conn, content_type: str) -> set:
 # TODO: OMDb (omdb_awards_text and title_score) & Wikipedia (title_awards and detailed_plot) upsert.
 
 
+# ===========================================================================
+# TMDB /recommendations links
+# ===========================================================================
+
+
 def record_recommendation_link(
     conn: sqlite3.Connection, seed_title_id: str, recommended_title_id: str, rank: int
 ) -> None:
@@ -144,3 +166,85 @@ def seed_already_processed(conn: sqlite3.Connection, seed_title_id: str) -> bool
         ).fetchone()
         is not None
     )
+
+
+# ===========================================================================
+# Letterboxd stats
+# ===========================================================================
+
+
+def _letterboxd_stats_row(film: dict) -> tuple:
+    """
+    Map a scraped Letterboxd `film` dict (the scraper's per-title result)
+    onto the title_letterboxd_stats column order. The histogram arrives as
+    star-labelled buckets; absent buckets default to 0, absent stats to NULL.
+    """
+    hist = {h["rating"]: h["count"] for h in film.get("histogram", [])}
+    stats = film.get("stats") or {}
+    return (
+        film["title_id"],
+        film["ratingValue"],
+        film["ratingCount"],
+        film["reviewCount"],
+        hist.get("half-★", 0),
+        hist.get("★", 0),
+        hist.get("★½", 0),
+        hist.get("★★", 0),
+        hist.get("★★½", 0),
+        hist.get("★★★", 0),
+        hist.get("★★★½", 0),
+        hist.get("★★★★", 0),
+        hist.get("★★★★½", 0),
+        hist.get("★★★★★", 0),
+        stats.get("watches"),
+        stats.get("lists"),
+        stats.get("likes"),
+        stats.get("top_rank"),
+    )
+
+
+def titles_missing_letterboxd_stats(conn: sqlite3.Connection) -> list:
+    """
+    The Letterboxd scrape work list: titles with no title_letterboxd_stats
+    row yet. The anti-join is the resume mechanism -- a title drops off the
+    list as soon as its row lands, so re-running picks up only what's left.
+
+    Returns (title_id, imdb_id, tmdb_id, content_type) per row. imdb_id may
+    be NULL: the scraper falls back to the tmdb slug for movies, while TV
+    titles without an imdb_id have no resolvable route.
+    """
+    return conn.execute(
+        """
+        SELECT t.title_id, t.imdb_id, t.tmdb_id, t.content_type
+        FROM titles t
+        WHERE NOT EXISTS (
+            SELECT 1 FROM title_letterboxd_stats s WHERE s.title_id = t.title_id
+        )
+        """
+    ).fetchall()
+
+
+def upsert_letterboxd_stats(conn: sqlite3.Connection, film: dict) -> None:
+    """
+    Write one scraped title's Letterboxd stats (rating value/count, the
+    half-star histogram, and watches/lists/likes/top_rank). INSERT OR REPLACE
+    keeps a single current row per title_id.
+    """
+    conn.execute(
+        """INSERT OR REPLACE INTO title_letterboxd_stats (
+            title_id, rating_value, rating_count, review_count,
+
+            rating_0_5_count, rating_1_0_count, rating_1_5_count, rating_2_0_count,
+            rating_2_5_count, rating_3_0_count, rating_3_5_count, rating_4_0_count,
+            rating_4_5_count, rating_5_0_count,
+
+            watches, lists, likes, top_rank
+        )
+        VALUES (
+            ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?
+        )""",
+        _letterboxd_stats_row(film),
+    )
+    conn.commit()

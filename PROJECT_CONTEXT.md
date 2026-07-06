@@ -119,7 +119,7 @@ Lives at `src/cinesync/schema.sql`. Created via `uv run cinesync-init-db`.
 - **`config_loader.py`** — `load_config()`; substitutes `${ENV_VAR}` placeholders (whole-value or embedded), raises clearly if unset.
 - **`init_db.py`** — `init_db()`, exposed as console script `cinesync-init-db`; loads `schema.sql` via `importlib.resources`. Won't overwrite an existing DB.
 - **`tmdb_parser.py`** — `parse_tmdb_response(data, content_type, source)` → dict of rows for every table (`title`, `genres`, `keywords`, `companies`, `credits`, `crew_extra`, `title_scores`). Handles all movie/TV shape differences (keywords key `keywords` vs `results`; TV runtime fallback to `last_episode_to_air`; `created_by` for TV creators; crew dedup; TMDB score 0-10→0-100; `external_ids` for imdb/wikidata). Call TMDB with `?append_to_response=keywords,credits,external_ids` for both types.
-- **`db_writer.py`** — `upsert_parsed_title()` (insert-or-refresh, returns is_new; **keywords full-replace**, other junctions INSERT OR IGNORE, title_scores upsert), `record_recommendation_link()`, `seed_already_processed()`.
+- **`db_writer.py`** — `upsert_tmdb_title()` (insert-or-refresh, returns is_new; **keywords full-replace**, other junctions INSERT OR IGNORE, title_scores upsert), `record_recommendation_link()`, `seed_already_processed()`.
 - **`discover.py`** — `build_discover_params(content_type, original_language, ..., date_gte=None, date_lte=None)` + `paced_get()` (self-throttle, 429 backoff via `Retry-After`).
   - **Branches on `content_type`**: movies use `primary_release_date.gte/.lte`, `with_runtime.gte`, `include_video`; TV uses `first_air_date.gte/.lte` and **omits runtime + include_video** (TV `with_runtime` filters by often-empty `episode_run_time`, silently dropping shows like Breaking Bad).
   - Uses `with_original_language` (content filter), NOT `language` (translation only). No `vote_average` floor.
@@ -146,7 +146,7 @@ The most involved runtime flow — combines threading, pagination, and date-wind
 **Threading model (correctness-critical):**
 - **Parallelize the fetches, serialize the writes.** SQLite is single-writer; concurrent writers get `database is locked`.
 - Worker threads (`ThreadPoolExecutor`, `MAX_WORKERS≈5`, under TMDB's 20-connection ceiling) do **network-only** work (`fetch_title_details` + parse), each with its own `requests.Session` via thread-local.
-- The **main thread owns the single SQLite connection** and does every `upsert_parsed_title`, plus all `known_ids` set mutation/dedup (avoids a race on the shared set).
+- The **main thread owns the single SQLite connection** and does every `upsert_tmdb_title`, plus all `known_ids` set mutation/dedup (avoids a race on the shared set).
 - Per-**title** threading, not per-page: ~95% of I/O per page is the ≤20 detail calls, not the 1 discover call. Pagination stays sequential (it learns `total_pages` as it goes).
 - Memory: completed `Future` results accumulate until the `with ThreadPoolExecutor` block exits; bounded per-page (~20 titles). Only matters if consolidating to one long-lived pool across pages, where you'd `futures.pop(fut)` after consuming.
 

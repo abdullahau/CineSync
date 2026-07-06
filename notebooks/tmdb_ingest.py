@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from cinesync.ingestion.tmdb_fetch import fetch_discover_page, fetch_title_details
 from cinesync.ingestion.tmdb_parser import parse_tmdb_response
-from cinesync.ingestion.db_crud import upsert_parsed_title, known_tmdb_ids
+from cinesync.ingestion.db_crud import upsert_tmdb_title, known_tmdb_ids
 from cinesync.ingestion.date_windows import resolve_windows, earliest_date
 from cinesync.paths import DATA_DIR
 from cinesync.config_loader import load_config
@@ -123,7 +123,7 @@ def run_sweep(content_type, params, source_label, date_gte=None):
                             f"    ! failed tmdb_id={tmdb_id}: {type(exc).__name__}: {exc}"
                         )
                         continue
-                    upsert_parsed_title(conn, parsed)
+                    upsert_tmdb_title(conn, parsed)
                     known_ids.add(tmdb_id)
                     total_fetched += 1
                     page_fetched += 1
