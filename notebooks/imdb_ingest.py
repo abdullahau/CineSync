@@ -6,8 +6,10 @@ from cinesync.ingestion.imdb_dataset import (
     normalize_genres,
 )
 
+# {variant: canonical}
 GENRE_MAP = {
-    "Sci-Fi & Fantasy": "Sci-Fi",  # {variant: canonical}
+    "Sci-Fi": "Science Fiction",
+    "Sci-Fi & Fantasy": "Science Fiction",
     "Reality-TV": "Reality",
 }
 

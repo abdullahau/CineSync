@@ -16,12 +16,11 @@ CREATE TABLE titles (
     runtime_minutes    INTEGER,             -- movies: runtime; tv: avg episode runtime
     number_of_seasons  INTEGER,             -- null for movies
     status             TEXT,                -- 'Released', 'Ended', 'Returning Series', etc.
-    imdb_id            TEXT,                -- needed for OMDb critic scores
+    imdb_id            TEXT,                -- needed for IMDb data enrichment & rating
     wikidata_id        TEXT,                -- needed for the Wikipedia plot
     tmdb_overview      TEXT,                -- TMDB's short synopsis
-    omdb_overview      TEXT,                -- OMDb's full plot summary TODO: replace OMDB with IMDB
+    imdb_overview      TEXT,                -- IMDb's full plot summary
     detailed_plot      TEXT,                -- longer Wikipedia "Plot" section, when available
-    omdb_awards_text   TEXT,                -- raw, unparsed OMDb "Awards" string TODO: remove OMDB awards text
     source             TEXT,                -- title discovery source
     date_added         TEXT DEFAULT (datetime('now')), -- immutable
     last_refreshed     TEXT DEFAULT (datetime('now')) -- mutable -- when metadata was last verified/re-fetched.

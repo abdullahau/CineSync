@@ -1,0 +1,107 @@
+{
+  "app": "dbdiga",
+  "version": 1,
+  "sql": "-- People/Users\nCREATE TABLE people (\n    person_id   TEXT PRIMARY KEY,\n    name        TEXT NOT NULL\n);\n\n-- Movie or TV series\nCREATE TABLE titles (\n    title_id           TEXT PRIMARY KEY,   -- 'movie_<tmdb_id>' or 'tv_<tmdb_id>'\n    tmdb_id            INTEGER NOT NULL,\n    content_type       TEXT NOT NULL CHECK (content_type IN ('movie','tv')),\n    name               TEXT NOT NULL,\n    original_language  TEXT,\n    release_year       INTEGER,\n    certificate        TEXT,                -- US certificate rating (R, MA, TV-14)\n    runtime_minutes    INTEGER,             -- movies: runtime; tv: avg episode runtime\n    number_of_seasons  INTEGER,             -- null for movies\n    status             TEXT,                -- 'Released', 'Ended', 'Returning Series', etc.\n    imdb_id            TEXT,                -- needed for OMDb critic scores\n    wikidata_id        TEXT,                -- needed for the Wikipedia plot\n    tmdb_overview      TEXT,                -- TMDB's short synopsis\n    imdb_overview      TEXT,                -- IMDb's full plot summary\n    detailed_plot      TEXT,                -- longer Wikipedia \"Plot\" section, when available\n    source             TEXT,                -- title discovery source\n    date_added         TEXT DEFAULT (datetime('now')), -- immutable\n    last_refreshed     TEXT DEFAULT (datetime('now')) -- mutable -- when metadata was last verified/re-fetched.\n);\n-- OMDb's \"movie\" box office figures?\n\n-- Genres (titles 1:M title_genres)\nCREATE TABLE title_genres (\n    title_id TEXT NOT NULL REFERENCES titles(title_id),\n    genre    TEXT NOT NULL,\n    PRIMARY KEY (title_id, genre)\n);\n\n-- TMDB keyword tags (title 1:M title_keywords)\nCREATE TABLE title_keywords (\n    title_id TEXT NOT NULL REFERENCES titles(title_id),\n    keyword  TEXT NOT NULL,\n    PRIMARY KEY (title_id, keyword)\n);\n\n-- Cast, director, writer, and (for TV) creator (title 1:M title_credits)\nCREATE TABLE title_credits (\n    title_id TEXT NOT NULL REFERENCES titles(title_id),\n    role     TEXT NOT NULL CHECK (role IN ('director','writer','creator','cast')),\n    name     TEXT NOT NULL,\n    \"order\"  INTEGER,       -- \"order\" is cast billing order from TMDB\n    PRIMARY KEY (title_id, role, name)\n);\n\n-- Production companies (title 1:M title_companies)\nCREATE TABLE title_companies (\n    title_id     TEXT NOT NULL REFERENCES titles(title_id),\n    company_id   INTEGER NOT NULL,\n    company_name TEXT NOT NULL,\n    PRIMARY KEY (title_id, company_id)\n);\n\n-- Producer-tier credits plus Director of Photography.\nCREATE TABLE title_crew_extra (\n    title_id   TEXT NOT NULL REFERENCES titles(title_id),\n    job        TEXT NOT NULL,      -- verbatim TMDB job title, e.g. 'Executive Producer'\n    name       TEXT NOT NULL,\n    department TEXT,               -- TMDB department, kept for reference/debugging\n    PRIMARY KEY (title_id, job, name)\n);\n\n-- Critic & audience scores/ratings\nCREATE TABLE title_scores (\n    title_id    TEXT NOT NULL REFERENCES titles(title_id),\n    source      TEXT NOT NULL CHECK (source IN\n                 ('rt_critic','rt_audience','imdb_rating','tmdb_rating')),\n    score       REAL,             -- normalized to a 0-100 scale at write time\n    sample_size INTEGER,          -- nullable\n    date_pulled TEXT DEFAULT (datetime('now')),\n    PRIMARY KEY (title_id, source)\n);\n\n-- Letterboxd ratings and stats\nCREATE TABLE title_letterboxd_stats (\n    title_id TEXT NOT NULL PRIMARY KEY REFERENCES titles(title_id),\n\n    -- Aggregate ratings\n    rating_value REAL,\n    rating_count INTEGER,\n    review_count INTEGER,\n\n    -- Rating distribution (number of ratings in each bucket)\n    rating_0_5_count INTEGER NOT NULL DEFAULT 0,\n    rating_1_0_count INTEGER NOT NULL DEFAULT 0,\n    rating_1_5_count INTEGER NOT NULL DEFAULT 0,\n    rating_2_0_count INTEGER NOT NULL DEFAULT 0,\n    rating_2_5_count INTEGER NOT NULL DEFAULT 0,\n    rating_3_0_count INTEGER NOT NULL DEFAULT 0,\n    rating_3_5_count INTEGER NOT NULL DEFAULT 0,\n    rating_4_0_count INTEGER NOT NULL DEFAULT 0,\n    rating_4_5_count INTEGER NOT NULL DEFAULT 0,\n    rating_5_0_count INTEGER NOT NULL DEFAULT 0,\n\n    -- Letterboxd statistics\n    watches INTEGER,\n    lists INTEGER,\n    likes INTEGER,\n\n    -- NULL if not in the Top 500 (movies)/Top 250 (documentary) list\n    top_rank INTEGER CHECK (\n        top_rank IS NULL OR\n        (top_rank BETWEEN 1 AND 500)\n    )\n);\n\n-- Awards received (P166) and nominations (P1411)\nCREATE TABLE title_awards (\n    title_id   TEXT NOT NULL REFERENCES titles(title_id),\n    award_name TEXT NOT NULL,        -- e.g. 'Cannes Film Festival: Palme d'Or'\n    result     TEXT NOT NULL CHECK (result IN ('won','nominated')),\n    year       INTEGER,\n    source     TEXT DEFAULT 'wikidata',\n    PRIMARY KEY (title_id, award_name, result, year)\n);\n\n-- Popularity & mention time series\nCREATE TABLE title_popularity (\n    title_id      TEXT NOT NULL REFERENCES titles(title_id),\n    source        TEXT NOT NULL CHECK (source IN ('tmdb_popularity','reddit_mentions')),\n    snapshot_date TEXT NOT NULL,\n    value         REAL NOT NULL,        -- TMDB popularity or reddit mentions\n    PRIMARY KEY (title_id, source, snapshot_date)\n);\n\n-- TMDB's /recommendations links -> relevance ordering, 1 = most relevant.\nCREATE TABLE title_recommendation_links (\n    seed_title_id        TEXT NOT NULL REFERENCES titles(title_id),\n    recommended_title_id TEXT NOT NULL REFERENCES titles(title_id),\n    rank                  INTEGER,\n    date_pulled           TEXT DEFAULT (datetime('now')),\n    PRIMARY KEY (seed_title_id, recommended_title_id)\n);\n\n-- Diary / Ratings / Watchlist\nCREATE TABLE watch_events (\n    watch_event_id  TEXT PRIMARY KEY,    -- uuid\n    person_id       TEXT NOT NULL REFERENCES people(person_id),\n    title_id        TEXT NOT NULL REFERENCES titles(title_id),\n    watched_date    TEXT NOT NULL,\n    is_rewatch      INTEGER CHECK (is_rewatch IN (0,1)),  -- nullable\n    rating_at_watch REAL\n);\n\n-- Makes re-importing a Letterboxd export idempotent\nCREATE UNIQUE INDEX idx_watch_events_unique\n    ON watch_events (person_id, title_id, watched_date);\n\n-- \"Current rating\" and \"last watched\" derived from watch_events\nCREATE VIEW current_ratings AS\nSELECT person_id, title_id, rating_at_watch AS rating, watched_date\nFROM (\n    SELECT person_id, title_id, rating_at_watch, watched_date,\n           ROW_NUMBER() OVER (\n               PARTITION BY person_id, title_id\n               ORDER BY watched_date DESC\n           ) AS rn\n    FROM watch_events\n    WHERE rating_at_watch IS NOT NULL\n)\nWHERE rn = 1;\n\n-- Recommendation eligibility derived from anti-join of titles & watch_events\nCREATE VIEW unwatched_titles AS\nSELECT t.*\nFROM titles t\nWHERE t.title_id NOT IN (SELECT DISTINCT title_id FROM watch_events);\n\n-- Recommendation shown to user groups\nCREATE TABLE recommendations (\n    recommendation_id       TEXT PRIMARY KEY,   -- uuid, generated at recommend() call time\n    title_id                TEXT NOT NULL REFERENCES titles(title_id),\n    generated_at            TEXT DEFAULT (datetime('now')),\n    mode                    TEXT,               -- 'personal_fit','mood','buzz','novelty','blended'\n    mood_query              TEXT,\n    novelty_dial            REAL,\n    recency_half_life_days  REAL,               -- numeric value to track recency dial\n    buzz_window             TEXT,               -- 'daily' / 'weekly' -- a real scoring input, same\n    min_critic_score        REAL,\n    aggregation_mode        TEXT,               -- 'mean','min','harmonic_mean','show_all'\n    score_breakdown_json    TEXT                -- raw per-person/per-signal scores, for debugging\n);\n\n-- Person's reaction to a shown recommendation\nCREATE TABLE feedback (\n    feedback_id       TEXT PRIMARY KEY,    -- uuid\n    recommendation_id TEXT NOT NULL REFERENCES recommendations(recommendation_id),\n    person_id         TEXT NOT NULL REFERENCES people(person_id),\n    action            TEXT NOT NULL CHECK (action IN\n                       ('watched_full','watched_partial','rejected_pre_watch')),\n    rating            REAL,                -- filled in only if watched\n    reject_reason     TEXT,                -- 'genre','cast','pacing','mood_mismatch','vibe', etc.\n    date_logged       TEXT DEFAULT (datetime('now'))\n);",
+  "dialect": "sqlite",
+  "positions": {
+    "people": {
+      "x": 1239,
+      "y": 785
+    },
+    "titles": {
+      "x": 1308,
+      "y": 1119
+    },
+    "title_genres": {
+      "x": 1036,
+      "y": 1056
+    },
+    "title_keywords": {
+      "x": 944,
+      "y": 1161
+    },
+    "title_credits": {
+      "x": 907,
+      "y": 1266
+    },
+    "title_companies": {
+      "x": 822,
+      "y": 1418
+    },
+    "title_crew_extra": {
+      "x": 1044,
+      "y": 1481
+    },
+    "title_scores": {
+      "x": 1690,
+      "y": 1082
+    },
+    "title_letterboxd_stats": {
+      "x": 1745,
+      "y": 1290
+    },
+    "title_awards": {
+      "x": 1081,
+      "y": 1637
+    },
+    "title_popularity": {
+      "x": 1711,
+      "y": 1912
+    },
+    "title_recommendation_links": {
+      "x": 1710,
+      "y": 2058
+    },
+    "watch_events": {
+      "x": 1706,
+      "y": 762
+    },
+    "recommendations": {
+      "x": 855,
+      "y": 608
+    },
+    "feedback": {
+      "x": 1490,
+      "y": 533
+    }
+  },
+  "camera": {
+    "x": -218,
+    "y": -153,
+    "scale": 0.4111
+  },
+  "annotations": [
+    {
+      "id": "amr97md0c-4",
+      "type": "group",
+      "x": 1625.2902772591513,
+      "y": 1841.572859166975,
+      "w": 392.0303297089631,
+      "h": 389.5120991593735,
+      "text": "Popularity snapshots & TMDB recommendation links",
+      "color": "purple"
+    },
+    {
+      "id": "amr97ib7n-3",
+      "type": "group",
+      "x": 753.932788638999,
+      "y": 986.4461286348779,
+      "w": 1262.3939804239217,
+      "h": 838.0169218199081,
+      "text": "Candidate Pool: Titles (films & TV), genres, keywords, credits, production, and audience & critic scores",
+      "color": "green"
+    },
+    {
+      "id": "amr97fpm5-2",
+      "type": "group",
+      "x": 751.7372943253101,
+      "y": 460.2943850094585,
+      "w": 1262.0054409005418,
+      "h": 516.0667352834012,
+      "text": "Users, watch history, user group recommendations history, and recommendation feedback",
+      "color": "blue"
+    }
+  ],
+  "hidden": [],
+  "manualLinks": []
+}
