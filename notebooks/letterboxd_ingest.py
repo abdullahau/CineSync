@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timezone
 import curl_cffi.requests as requests
 from parsel import Selector
-from cinesync.paths import DATA_DIR, LOGS_DIR
+from cinesync.paths import DB_PATH, LOGS_DIR
 from cinesync.ingestion.db_crud import (
     titles_missing_letterboxd_stats,
     upsert_letterboxd_stats,
@@ -205,7 +205,7 @@ async def get_letterboxd_data(
 
 
 async def main():
-    conn = sqlite3.connect(DATA_DIR / "cinesync.db")
+    conn = sqlite3.connect(DB_PATH)
 
     # Titles with no Letterboxd stats row yet — the anti-join is the resume
     # mechanism. No imdb_id filter: titles without one fall back to the TMDB

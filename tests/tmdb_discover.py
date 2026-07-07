@@ -1,6 +1,5 @@
 import requests
 from cinesync.utils.net import force_ipv4
-from cinesync.paths import DATA_DIR
 from cinesync.config_loader import load_config
 
 force_ipv4()

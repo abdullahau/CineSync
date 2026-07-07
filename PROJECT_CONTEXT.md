@@ -1,7 +1,4 @@
-# CineSync — Project Context & Handoff
-
-> Self-contained briefing for continuing CineSync in a fresh conversation. Captures the objective, every significant design decision, the current state of the code, and what comes next. Read top to bottom before resuming, and attach the actual source files alongside it so a fresh Claude reads real code rather than a summary of it.
-
+# CineSync — Project Context
 ---
 
 ## 1. Objective

@@ -1,7 +1,5 @@
 import sqlite3
-from cinesync.paths import DATA_DIR, DB_SCHEMA_PATH
-
-DB_PATH = DATA_DIR / "cinesync.db"
+from cinesync.paths import DB_SCHEMA_PATH, DB_PATH
 
 
 def init_db():

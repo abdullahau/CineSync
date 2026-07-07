@@ -1,5 +1,7 @@
 ## TODOs:
 
+- [ ] Ensure that if a title has one person credited with the writer and director role, the name appears on both bills
+- [ ] pull `certificate`/`rating` from OMDB API and when wikidata ID or IMDB ID is missing, pull those from OMDB
 - [ ] consider adding "to watchlist" to influence recommendation - from Letterboxd or IMDB - optional
 - [ ] buzz_window is good, but I want to be able to state where I want something "buzzing" or not.
 - [ ] consider adding "certificate/rating" filter to ensure movies are, as per US standards, at maximum of age rating

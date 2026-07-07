@@ -6,14 +6,14 @@ from cinesync.ingestion.tmdb_fetch import fetch_discover_page, fetch_title_detai
 from cinesync.ingestion.tmdb_parser import parse_tmdb_response
 from cinesync.ingestion.db_crud import upsert_tmdb_title, known_tmdb_ids
 from cinesync.ingestion.date_windows import resolve_windows, earliest_date
-from cinesync.paths import DATA_DIR
+from cinesync.paths import DB_PATH
 from cinesync.config_loader import load_config
 from cinesync.utils.net import force_ipv4
 
 force_ipv4()
 config = load_config()
 tmdb_api_key = config["apis"]["tmdb_api_key"]
-conn = sqlite3.Connection(DATA_DIR / "cinesync.db")
+conn = sqlite3.Connection(DB_PATH)
 
 MAX_WORKERS = 10
 CEILING = f"{date.today().year}-12-31"
