@@ -21,6 +21,8 @@ Build a **local, notebook/script-based recommendation system** that learns the m
 5. **Filter/sort by weighted critic score** — Letterboxd + RT-critic weighted higher than RT-audience/IMDb/TMDB.
 6. **Learn from feedback** — log watched / partially watched / rejected (with reason or "wrong vibe"), retrain periodically.
 
+(consider adding "to watchlist" to influence recommendation - from Letterboxd or IMDB - optional)
+
 ### Target `recommend()` shape (eventual Phase 9 interface)
 ```python
 recommend(mood="surreal political", novelty=0.7, min_critic_score=60,
@@ -53,8 +55,6 @@ recommend(mood="surreal political", novelty=0.7, min_critic_score=60,
 - **APIs/sources:** TMDB (metadata, discover, recommendations, daily exports/popularity), OMDb (IMDb rating + RT critic + awards text + certificate rating?), Wikidata/Wikipedia (detailed plot + structured awards), Reddit via PRAW (buzz). RT-audience & Letterboxd require scraping (flagged fragile). Letterboxd offers a way to reach a movie (not TV) page using TMDB ID using the url: https://letterboxd.com/tmdb/{tmdb_id}, OR IMDB ID using the url: https://letterboxd.com/imdb/{imdb_id}
 
 (Rotten Tomato links for each title can be potentially extracted from Wikidata Query SPARQL)
-
-(Figure out a way to pass cloudflare and other human tests on both RT & Letterboxd. From RT extract critic tomatometer & audience popcornmeter. From Letterboxd extract "watched", "appears_on_list", "hearted/liked", "total_rating", "weighted_average_score", "plot_values" for score distribution)
 
 ---
 

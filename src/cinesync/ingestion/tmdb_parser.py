@@ -73,9 +73,9 @@ def _parse_title_row(data: dict, content_type: str, source: str) -> dict:
         "runtime_minutes": runtime_minutes,
         "number_of_seasons": number_of_seasons,
         "status": data.get("status"),
-        "imdb_id": external_ids.get("imdb_id"),
-        "wikidata_id": external_ids.get("wikidata_id"),
-        "overview": data.get("overview"),
+        "imdb_id": external_ids.get("imdb_id") or None,
+        "wikidata_id": external_ids.get("wikidata_id") or None,
+        "overview": data.get("overview") or None,
         "detailed_plot": None,  # filled in later by the Wikipedia enrichment step
         "source": source,
     }
