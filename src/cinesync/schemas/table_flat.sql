@@ -34,7 +34,9 @@ scores_agg AS (
         MAX(CASE WHEN source = 'rt_critic'   THEN score END) AS rt_critic,
         MAX(CASE WHEN source = 'rt_audience' THEN score END) AS rt_audience,
         MAX(CASE WHEN source = 'imdb_rating' THEN score END) AS imdb_rating,
-        MAX(CASE WHEN source = 'tmdb_rating' THEN score END) AS tmdb_rating
+        MAX(CASE WHEN source = 'imdb_rating' THEN sample_size END) AS imdb_rating_count,
+        MAX(CASE WHEN source = 'tmdb_rating' THEN score END) AS tmdb_rating,
+        MAX(CASE WHEN source = 'tmdb_rating' THEN sample_size END) AS tmdb_rating_count
     FROM title_scores
     GROUP BY title_id
 ),
@@ -87,7 +89,9 @@ SELECT
     s.rt_critic,
     s.rt_audience,
     s.imdb_rating,
-    s.tmdb_rating
+    s.imdb_rating_count,
+    s.tmdb_rating,
+    s.tmdb_rating_count
 FROM titles t
 LEFT JOIN genres_agg     g  ON g.title_id  = t.title_id
 LEFT JOIN keywords_agg   k  ON k.title_id  = t.title_id

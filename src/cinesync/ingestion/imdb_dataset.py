@@ -14,6 +14,7 @@ map is skipped (that is also the "keep only my titles" filter). Fields are '\\N'
 for null.
 
 Source: https://datasets.imdbws.com/  (personal / non-commercial use)
+Schema definitions: https://developer.imdb.com/non-commercial-datasets/
 
 GENRE VOCABULARY
 ----------------
