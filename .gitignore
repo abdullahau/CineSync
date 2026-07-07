@@ -7,10 +7,10 @@ data/cinesync.db
 data/cinesync_flat.db
 data/cinesync.db-journal
 
-# Logs, backups, and downloads
+# Logs, backups, and tmps
 data/logs/
 data/backup/
-data/tmdb_popularity/
+data/tmp/
 
 # Editor files
 .vscode

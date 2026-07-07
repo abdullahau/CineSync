@@ -11,3 +11,4 @@ DB_PATH = DATA_DIR / "cinesync.db"
 NOTEBOOKS_DIR = PROJECT_ROOT / "notebooks"
 
 LOGS_DIR = DATA_DIR / "logs"
+TMP_DIR = DATA_DIR / "tmp"

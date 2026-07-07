@@ -12,21 +12,21 @@ CREATE TABLE titles (
     name               TEXT NOT NULL,
     original_language  TEXT,
     release_year       INTEGER,
-    certificate        TEXT,                -- US certificate rating (R, MA, TV-14)
+    certificate        TEXT,                -- US certificate rating from TMDB (R, MA, TV-14)
     runtime_minutes    INTEGER,             -- movies: runtime; tv: avg episode runtime
     number_of_seasons  INTEGER,             -- null for movies
     status             TEXT,                -- 'Released', 'Ended', 'Returning Series', etc.
     imdb_id            TEXT,                -- needed for OMDb critic scores
     wikidata_id        TEXT,                -- needed for the Wikipedia plot
     tmdb_overview      TEXT,                -- TMDB's short synopsis
-    omdb_overview      TEXT,                -- OMDb's full plot summary
+    omdb_overview      TEXT,                -- OMDb's full plot summary TODO: replace OMDB with IMDB
     detailed_plot      TEXT,                -- longer Wikipedia "Plot" section, when available
-    omdb_awards_text   TEXT,                -- raw, unparsed OMDb "Awards" string
+    omdb_awards_text   TEXT,                -- raw, unparsed OMDb "Awards" string TODO: remove OMDB awards text
     source             TEXT,                -- title discovery source
     date_added         TEXT DEFAULT (datetime('now')), -- immutable
     last_refreshed     TEXT DEFAULT (datetime('now')) -- mutable -- when metadata was last verified/re-fetched.
 );
--- OMDb's "movie" box office figures?
+-- IMDb's "movie" box office figures?
 -- Rotten Tomato links/url slug - extracted from Wikidata?
 -- Create a separate table for detailed plot from Wikipedia?
 

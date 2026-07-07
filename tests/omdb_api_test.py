@@ -12,7 +12,12 @@ url = "http://www.omdbapi.com/"
 
 imdb_id = "tt0363226"
 
-params = {"apikey": apikey, "i": imdb_id, "plot": "full", "tomatoes": "true"}
+params = {
+    "apikey": apikey,
+    "i": imdb_id,
+    "plot": "full",
+    "tomatoes": "true",
+}
 
 response = requests.get(url, params=params)
 
