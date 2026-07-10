@@ -1,4 +1,4 @@
-import sqlite3, requests, threading, time
+import csv, sqlite3, requests, threading, time
 from datetime import date
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -6,7 +6,7 @@ from cinesync.ingestion.tmdb_fetch import fetch_discover_page, fetch_title_detai
 from cinesync.ingestion.tmdb_parser import parse_tmdb_response
 from cinesync.ingestion.db_crud import upsert_tmdb_title, known_tmdb_ids
 from cinesync.ingestion.date_windows import resolve_windows, earliest_date
-from cinesync.paths import DB_PATH
+from cinesync.paths import DB_PATH, DATA_DIR
 from cinesync.config_loader import load_config
 from cinesync.utils.net import force_ipv4
 
@@ -17,6 +17,18 @@ conn = sqlite3.Connection(DB_PATH)
 
 MAX_WORKERS = 10
 CEILING = f"{date.today().year}-12-31"
+
+
+def load_ignored_ids(content_type):
+    IGNORE_CSV = DATA_DIR / "tmdb_ignore.csv"
+    if not IGNORE_CSV.exists():
+        return set()
+    with open(IGNORE_CSV, newline="", encoding="utf-8") as f:
+        return {
+            int(row["tmdb_id"])
+            for row in csv.DictReader(f)
+            if row["content_type"] == content_type
+        }
 
 
 def get_session(thread_local):
@@ -54,6 +66,7 @@ def run_sweep(content_type, params, source_label, date_gte=None):
     print(f"\n=== {source_label} | {content_type.upper()} ===")
     probe_session = requests.Session()
     known_ids = known_tmdb_ids(conn, content_type)
+    ignored_ids = load_ignored_ids(content_type)
     thread_local = threading.local()
 
     if date_gte is None:
@@ -80,7 +93,7 @@ def run_sweep(content_type, params, source_label, date_gte=None):
     )
     print(f"Resolved {len(windows)} window(s)")
 
-    total_discovered = total_fetched = total_already_known = 0
+    total_discovered = total_fetched = total_already_known = total_ignored = 0
     capped = []
 
     for gte, lte, reported, win_results in windows:
@@ -101,8 +114,15 @@ def run_sweep(content_type, params, source_label, date_gte=None):
                 date_lte=lte,
                 **params,
             )
-            to_fetch = [e["id"] for e in payload["results"] if e["id"] not in known_ids]
-            total_already_known += len(payload["results"]) - len(to_fetch)
+            results = payload["results"]
+            to_fetch = [
+                e["id"]
+                for e in results
+                if e["id"] not in known_ids and e["id"] not in ignored_ids
+            ]
+            page_ignored = sum(1 for e in results if e["id"] in ignored_ids)
+            total_ignored += page_ignored
+            total_already_known += len(results) - len(to_fetch) - page_ignored
             print(f"    page {page}/{pages}: {len(to_fetch)} new titles to fetch...")
 
             page_fetched = page_failed = 0
@@ -140,7 +160,10 @@ def run_sweep(content_type, params, source_label, date_gte=None):
         f"control {probe_total_results}  windows_sum {total_discovered}  "
         f"ratio {total_discovered / max(probe_total_results, 1):.3f}"
     )
-    print(f"fetched {total_fetched}  already_known {total_already_known}")
+    print(
+        f"fetched {total_fetched}  already_known {total_already_known}  "
+        f"ignored {total_ignored}"
+    )
     if capped:
         print(f"\u26a0 {len(capped)} window(s) hit the 500-page cap:")
         for g, l, p in capped:
