@@ -7,6 +7,8 @@ is read back line by line, and rows are written in bounded batches.
 
   title.ratings.tsv.gz  -> title_scores  (source='imdb_rating', 0-10 -> 0-100)
   title.basics.tsv.gz   -> title_genres  (genres split on comma, deduped)
+                        -> titles.runtime_minutes  (IMDb runtimeMinutes,
+                           overwrites TMDB's value when IMDb has a valid one)
 
 The tconst -> title_id join the old staging+merge did in SQL now happens in
 Python via id_map = {imdb_id: title_id} loaded from titles. A tconst not in the
@@ -105,6 +107,7 @@ _RATINGS_SQL = (
     "score=excluded.score, sample_size=excluded.sample_size, date_pulled=excluded.date_pulled"
 )
 _GENRES_SQL = "INSERT OR IGNORE INTO title_genres (title_id, genre) VALUES (?, ?)"
+_RUNTIMES_SQL = "UPDATE titles SET runtime_minutes = ? WHERE title_id = ?"
 
 
 def ingest_ratings(conn, gz_path, id_map, **kw):
@@ -143,6 +146,26 @@ def ingest_genres(conn, gz_path, id_map, genre_map=None, **kw):
     return _stream_tsv(conn, gz_path, ("tconst", "genres"), emit, _GENRES_SQL, **kw)
 
 
+def ingest_runtimes(conn, gz_path, id_map, **kw):
+    """1:1 overwrite of titles.runtime_minutes from IMDb's runtimeMinutes.
+    IMDb is the primary runtime source: a valid integer overwrites whatever
+    TMDB wrote. A missing/'\\N'/non-numeric runtime -- or a title with no
+    matching imdb_id -- yields no row, so TMDB's original runtime is kept."""
+
+    def emit(fields, idx):
+        title_id = id_map.get(fields[idx["tconst"]])
+        if title_id is None:
+            return ()
+        runtime = _cast(fields[idx["runtimeMinutes"]], int)
+        if runtime is None:
+            return ()
+        return ((runtime, title_id),)
+
+    return _stream_tsv(
+        conn, gz_path, ("tconst", "runtimeMinutes"), emit, _RUNTIMES_SQL, **kw
+    )
+
+
 def _load_genre_map(conn, genre_map):
     conn.execute(
         "CREATE TEMP TABLE IF NOT EXISTS _genre_map "
@@ -177,27 +200,46 @@ def normalize_genres(conn, genre_map):
 
 def run_ingestion(conn, id_map, genre_map=None, batch_size=50_000):
     """Download -> ingest into cinesync -> delete, ratings then basics.
-    Does NOT normalize existing rows -- call normalize_genres() for that."""
+    title.basics drives TWO ops in separate streaming passes over the one
+    downloaded file: genres (fan-out into title_genres) and runtimeMinutes
+    (overwrite titles.runtime_minutes, IMDb primary). Does NOT normalize
+    existing genre rows -- call normalize_genres() for that."""
     session = requests.Session()
-    for filename, fn in (
+    plan = (
         (
             "title.ratings.tsv.gz",
-            lambda p: ingest_ratings(conn, p, id_map, batch_size=batch_size),
+            (
+                (
+                    "ratings",
+                    lambda p: ingest_ratings(conn, p, id_map, batch_size=batch_size),
+                ),
+            ),
         ),
         (
             "title.basics.tsv.gz",
-            lambda p: ingest_genres(
-                conn, p, id_map, genre_map=genre_map, batch_size=batch_size
+            (
+                (
+                    "genres",
+                    lambda p: ingest_genres(
+                        conn, p, id_map, genre_map=genre_map, batch_size=batch_size
+                    ),
+                ),
+                (
+                    "runtimes",
+                    lambda p: ingest_runtimes(conn, p, id_map, batch_size=batch_size),
+                ),
             ),
         ),
-    ):
+    )
+    for filename, ops in plan:
         print(f"Downloading {filename} ...")
         p = download_dataset(filename, session)
         try:
-            changed, skipped = fn(p)
+            for label, fn in ops:
+                changed, skipped = fn(p)
+                print(
+                    f"  {label}: {changed} rows changed"
+                    + (f", {skipped} malformed skipped" if skipped else "")
+                )
         finally:
             p.unlink(missing_ok=True)
-        print(
-            f"  {changed} rows changed"
-            + (f", {skipped} malformed skipped" if skipped else "")
-        )
