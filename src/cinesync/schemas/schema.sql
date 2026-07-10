@@ -19,8 +19,6 @@ CREATE TABLE titles (
     imdb_id            TEXT,                -- needed for IMDb data enrichment & rating
     wikidata_id        TEXT,                -- needed for the Wikipedia plot
     tmdb_overview      TEXT,                -- TMDB's short synopsis
-    imdb_overview      TEXT,                -- IMDb's full plot summary
-    detailed_plot      TEXT,                -- longer Wikipedia "Plot" section, when available
     source             TEXT,                -- title discovery source
     date_added         TEXT DEFAULT (datetime('now')), -- immutable
     last_refreshed     TEXT DEFAULT (datetime('now')) -- mutable -- when metadata was last verified/re-fetched.
@@ -28,6 +26,18 @@ CREATE TABLE titles (
 -- IMDb's "movie" box office figures?
 -- Rotten Tomato links/url slug - extracted from Wikidata?
 -- Create a separate table for detailed plot from Wikipedia?
+
+-- Long-form plot text, 1:1 with titles. Written by IMDb scraper + Wikipedia.
+CREATE TABLE title_plots (
+    title_id        TEXT NOT NULL PRIMARY KEY REFERENCES titles(title_id),
+    imdb_outline    TEXT,   -- IMDb short one-liner
+    imdb_summary    TEXT,   -- IMDb medium plot summary
+    imdb_synopsis   TEXT,   -- IMDb long detailed synopsis
+    wikipedia_plot  TEXT,   -- Wikipedia "Plot" section
+    tagline         TEXT,
+    imdb_error      TEXT,   -- NULL on success
+    imdb_fetched_at TEXT,   -- NULL until the IMDb scraper has run for this title
+);
 
 -- Genres (titles 1:M title_genres)
 CREATE TABLE title_genres (
@@ -40,7 +50,8 @@ CREATE TABLE title_genres (
 CREATE TABLE title_keywords (
     title_id TEXT NOT NULL REFERENCES titles(title_id),
     keyword  TEXT NOT NULL,
-    PRIMARY KEY (title_id, keyword)
+    source   TEXT NOT NULL,
+    PRIMARY KEY (title_id, keyword, source)
 );
 
 -- Cast, director, writer, and (for TV) creator (title 1:M title_credits)
@@ -111,6 +122,15 @@ CREATE TABLE title_letterboxd_stats (
         top_rank IS NULL OR
         (top_rank BETWEEN 1 AND 500)
     )
+);
+
+-- PLACEHOLDER: populated later from the IMDb ratings HTML page.
+CREATE TABLE title_imdb_rating_dist (
+    title_id    TEXT NOT NULL PRIMARY KEY REFERENCES titles(title_id),
+    votes_1  INTEGER, votes_2  INTEGER, votes_3  INTEGER, votes_4  INTEGER, votes_5 INTEGER,
+    votes_6  INTEGER, votes_7  INTEGER, votes_8  INTEGER, votes_9  INTEGER, votes_10 INTEGER,
+    total_votes INTEGER,   -- checksum against title_scores.sample_size for imdb_rating
+    fetched_at  TEXT DEFAULT (datetime('now'))
 );
 
 -- Awards received (P166) and nominations (P1411)

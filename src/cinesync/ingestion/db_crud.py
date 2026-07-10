@@ -58,10 +58,10 @@ def upsert_tmdb_title(conn: sqlite3.Connection, parsed: dict) -> bool:
             """INSERT INTO titles
                (title_id, tmdb_id, content_type, name, original_language, release_year,
                 runtime_minutes, number_of_seasons, status, imdb_id, wikidata_id,
-                tmdb_overview, detailed_plot, source)
+                tmdb_overview, source)
                VALUES (:title_id, :tmdb_id, :content_type, :name, :original_language,
                        :release_year, :runtime_minutes, :number_of_seasons, :status,
-                       :imdb_id, :wikidata_id, :overview, :detailed_plot, :source)""",
+                       :imdb_id, :wikidata_id, :overview, :source)""",
             t,
         )
         is_new = True
@@ -82,9 +82,13 @@ def upsert_tmdb_title(conn: sqlite3.Connection, parsed: dict) -> bool:
     for g in parsed["genres"]:
         conn.execute("INSERT OR IGNORE INTO title_genres VALUES (?, ?)", (title_id, g))
 
-    conn.execute("DELETE FROM title_keywords WHERE title_id = ?", (title_id,))
+    conn.execute(
+        "DELETE FROM title_keywords WHERE title_id=? AND source='tmdb'", (title_id,)
+    )
     for k in parsed["keywords"]:
-        conn.execute("INSERT INTO title_keywords VALUES (?, ?)", (title_id, k))
+        conn.execute(
+            "INSERT OR IGNORE INTO title_keywords VALUES (?, ?, 'tmdb')", (title_id, k)
+        )
 
     for c in parsed["companies"]:
         conn.execute(
@@ -246,5 +250,86 @@ def upsert_letterboxd_stats(conn: sqlite3.Connection, film: dict) -> None:
             ?, ?, ?, ?
         )""",
         _letterboxd_stats_row(film),
+    )
+    conn.commit()
+
+
+# ===========================================================================
+# IMDB Data
+# ===========================================================================
+
+
+def titles_missing_imdb_enrichment(conn):
+    """IMDb scrape work list + resume mechanism: titles with a usable imdb_id
+    whose enrichment has never landed OR last errored. A successful row
+    (imdb_fetched_at set, imdb_error NULL) drops off the list, so re-running
+    picks up only what's left."""
+    return conn.execute(
+        """
+        SELECT t.title_id, t.imdb_id
+        FROM titles t
+        LEFT JOIN title_plots p ON p.title_id = t.title_id
+        WHERE t.imdb_id IS NOT NULL AND t.imdb_id != ''
+          AND (p.title_id IS NULL OR p.imdb_fetched_at IS NULL OR p.imdb_error IS NOT NULL)
+        """
+    ).fetchall()
+
+
+def upsert_imdb_enrichment(conn, title_id, rec, genre_map=None):
+    """Fan one scraped IMDb record across title_plots (plots + tagline),
+    title_genres (additive), and title_keywords (source='imdb', full-replace
+    scoped to that source). On error, only imdb_error/imdb_fetched_at are
+    written -- existing text and wikipedia_plot are preserved."""
+    err = rec.get("error")
+    if err is not None:
+        conn.execute(
+            """INSERT INTO title_plots (title_id, imdb_fetched_at, imdb_error)
+               VALUES (?, datetime('now'), ?)
+               ON CONFLICT(title_id) DO UPDATE SET
+                 imdb_fetched_at=excluded.imdb_fetched_at,
+                 imdb_error=excluded.imdb_error""",
+            (title_id, err),
+        )
+        conn.commit()
+        return
+
+    genre_map = genre_map or {}
+    taglines = rec.get("taglines") or []
+    tagline = (
+        taglines[0] if taglines else None
+    )  # collapse to the first; IMDb owns this column
+
+    conn.execute(
+        """INSERT INTO title_plots
+             (title_id, imdb_outline, imdb_summary, imdb_synopsis,
+              tagline, imdb_fetched_at, imdb_error)
+           VALUES (?, ?, ?, ?, ?, datetime('now'), NULL)
+           ON CONFLICT(title_id) DO UPDATE SET
+             imdb_outline=excluded.imdb_outline, imdb_summary=excluded.imdb_summary,
+             imdb_synopsis=excluded.imdb_synopsis, tagline=excluded.tagline,
+             imdb_fetched_at=excluded.imdb_fetched_at, imdb_error=NULL""",
+        (
+            title_id,
+            rec.get("outline"),
+            rec.get("summary"),
+            rec.get("synopsis"),
+            tagline,
+        ),
+    )
+
+    for g in rec.get("genres") or []:
+        g = g.strip()
+        if g:
+            conn.execute(
+                "INSERT OR IGNORE INTO title_genres VALUES (?, ?)",
+                (title_id, genre_map.get(g, g)),
+            )
+
+    conn.execute(
+        "DELETE FROM title_keywords WHERE title_id=? AND source='imdb'", (title_id,)
+    )
+    conn.executemany(
+        "INSERT OR IGNORE INTO title_keywords (title_id, keyword, source) VALUES (?, ?, 'imdb')",
+        [(title_id, k) for k in (rec.get("keywords") or [])],
     )
     conn.commit()

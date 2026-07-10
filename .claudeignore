@@ -1,0 +1,71 @@
+# --- Secrets / config ---
+.env
+.env.*
+*.key
+config.local.yaml
+
+# --- Databases (source of truth + derived; never load into context) ---
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+cinesync.db
+cinesync_flat.db
+letterboxd.db
+imdb_*.db
+
+# --- Bulk / downloaded / scraped data ---
+data/
+tmp/
+*.tsv
+*.tsv.gz
+*.csv.gz
+*.gz
+*.parquet
+*.feather
+imdb_bulk/
+
+# Keep small hand-maintained CSVs visible if you want them; otherwise uncomment:
+# *.csv
+# But do keep these ignore-exceptions in mind — Letterboxd exports & ignore lists:
+# ratings.csv / diary.csv (watch history) and tmdb_ignore.csv are usually fine to
+# leave OUT of ignore since they're small; add them here if they get large.
+
+# --- Logs & failure side-files ---
+logs/
+*.log
+*_failures.jsonl
+*.jsonl
+
+# --- Python / uv / build ---
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.uv/
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# --- Embeddings / model artifacts (Phase 2+) ---
+*.npy
+*.npz
+*.pt
+*.bin
+*.safetensors
+models/
+embeddings/
+
+# --- OS / editor cruft ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
