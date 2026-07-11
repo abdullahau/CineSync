@@ -381,3 +381,26 @@ def upsert_imdb_rating_dist(conn, title_id, rec):
     )
     conn.commit()
     return True
+
+
+def titles_missing_imdb_data(conn):
+    """Union work list for the batched IMDb fetch: titles with a usable imdb_id
+    that still need EITHER storyline enrichment (title_plots missing / never
+    fetched / last errored) OR a ratings-distribution row. One batched request
+    covers both, so a title appears once if it needs either and drops off only
+    once both sides have landed. It's the OR-union of titles_missing_imdb_
+    enrichment and titles_missing_imdb_rating_dist."""
+    return conn.execute(
+        """
+        SELECT t.title_id, t.imdb_id
+        FROM titles t
+        LEFT JOIN title_plots p ON p.title_id = t.title_id
+        WHERE t.imdb_id IS NOT NULL AND t.imdb_id != ''
+          AND (
+              p.title_id IS NULL OR p.imdb_fetched_at IS NULL OR p.imdb_error IS NOT NULL
+              OR NOT EXISTS (
+                  SELECT 1 FROM title_imdb_rating_dist d WHERE d.title_id = t.title_id
+              )
+          )
+        """
+    ).fetchall()

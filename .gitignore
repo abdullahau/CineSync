@@ -3,9 +3,13 @@
 config.yaml
 
 # Database
-data/cinesync.db
-data/cinesync_flat.db
-data/cinesync.db-journal
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.bak
 
 # Logs, backups, and tmps
 data/logs/

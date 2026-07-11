@@ -79,6 +79,73 @@ def fetch_title(session, imdb_id, retries=4):
     return {"error": f"failed after {retries} retries: {last}"}
 
 
+def _batch_element(result):
+    """One batched sub-result -> fetch_title's contract: {'title': raw} | {'error'}."""
+    if not isinstance(result, dict):
+        return {"error": f"unexpected batch element: {str(result)[:200]}"}
+    if result.get("errors"):
+        return {"error": json.dumps(result["errors"])[:300]}
+    title = (result.get("data") or {}).get("title")
+    return {"title": title} if title else {"error": "no title in response"}
+
+
+def fetch_enrichment_batch(session, imdb_id, retries=4):
+    """Fetch storyline + worldwide ratings histogram for one title in a SINGLE
+    batched GraphQL POST (a JSON array of the persisted Title_Storyline op and
+    the inline TitleRatingsHistogram op). Returns
+
+        {"storyline": {'title'|'error'}, "histogram": {'title'|'error'}}
+
+    where each side follows fetch_title's contract, so imdb_parser.parse and
+    parse_ratings_histogram apply unchanged. HTTP-level failures (403/429/5xx)
+    retry the WHOLE batch with backoff; a per-op GraphQL error is reported for
+    that op only, so one side can succeed while the other fails. Batch reply is
+    array-ordered to the request, so index 0=storyline, 1=histogram."""
+    ops = [
+        {
+            "operationName": OPERATION,
+            "variables": {
+                "isInMachineTranslateWeblab": True,
+                "locale": "en-US",
+                "titleId": imdb_id,
+            },
+            "extensions": {"persistedQuery": {"sha256Hash": SHA256, "version": 1}},
+        },
+        {
+            "operationName": RATINGS_OPERATION,
+            "query": RATINGS_QUERY,
+            "variables": {"id": imdb_id},
+        },
+    ]
+    body = json.dumps(ops)
+    last = ""
+    for attempt in range(retries):
+        try:
+            r = session.post(
+                ENDPOINT, headers=HEADERS, data=body, impersonate="chrome", timeout=25
+            )
+            if r.status_code == 200:
+                data = r.json()
+                if not isinstance(data, list) or len(data) != 2:
+                    err = {"error": f"bad batch shape: {str(data)[:200]}"}
+                    return {"storyline": dict(err), "histogram": dict(err)}
+                return {
+                    "storyline": _batch_element(data[0]),
+                    "histogram": _batch_element(data[1]),
+                }
+            if r.status_code in (403, 429, 500, 502, 503):
+                last = f"HTTP {r.status_code}"
+                time.sleep((2**attempt) + random.uniform(0, 1))
+                continue
+            err = {"error": f"HTTP {r.status_code}: {r.text[:200]}"}
+            return {"storyline": dict(err), "histogram": dict(err)}
+        except Exception as e:
+            last = str(e)
+            time.sleep((2**attempt) + random.uniform(0, 1))
+    err = {"error": f"failed after {retries} retries: {last}"}
+    return {"storyline": dict(err), "histogram": dict(err)}
+
+
 def fetch_ratings_histogram(session, imdb_id, retries=4):
     """Worldwide IMDb ratings histogram via an inline (non-persisted) GraphQL
     POST. Returns {'title': <raw title json>} (carrying ratingsSummary +
