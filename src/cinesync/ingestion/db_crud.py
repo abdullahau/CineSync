@@ -333,3 +333,51 @@ def upsert_imdb_enrichment(conn, title_id, rec, genre_map=None):
         [(title_id, k) for k in (rec.get("keywords") or [])],
     )
     conn.commit()
+
+
+def titles_missing_imdb_rating_dist(conn):
+    """IMDb ratings-histogram work list + resume mechanism: titles with a usable
+    imdb_id and no title_imdb_rating_dist row yet. A row landing drops the title
+    off the list. (No error column here, so a title that returns no ratings
+    stays on the list and is re-probed next run -- accepted, most titles rate.)"""
+    return conn.execute(
+        """
+        SELECT t.title_id, t.imdb_id
+        FROM titles t
+        WHERE t.imdb_id IS NOT NULL AND t.imdb_id != ''
+          AND NOT EXISTS (
+              SELECT 1 FROM title_imdb_rating_dist d WHERE d.title_id = t.title_id
+          )
+        """
+    ).fetchall()
+
+
+def upsert_imdb_rating_dist(conn, title_id, rec):
+    """Write one title's worldwide IMDb rating distribution into
+    title_imdb_rating_dist (votes_1..votes_10 + total_votes). Overwrite-on-
+    refresh via ON CONFLICT. Returns False (writes nothing) when there's no
+    distribution -- total_votes falsy -- so a ratingless title leaves no row."""
+    if not rec.get("total_votes"):
+        return False
+    v = rec["votes"]
+    conn.execute(
+        """INSERT INTO title_imdb_rating_dist
+             (title_id, votes_1, votes_2, votes_3, votes_4, votes_5,
+              votes_6, votes_7, votes_8, votes_9, votes_10, total_votes, fetched_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+           ON CONFLICT(title_id) DO UPDATE SET
+             votes_1=excluded.votes_1, votes_2=excluded.votes_2,
+             votes_3=excluded.votes_3, votes_4=excluded.votes_4,
+             votes_5=excluded.votes_5, votes_6=excluded.votes_6,
+             votes_7=excluded.votes_7, votes_8=excluded.votes_8,
+             votes_9=excluded.votes_9, votes_10=excluded.votes_10,
+             total_votes=excluded.total_votes, fetched_at=datetime('now')""",
+        (
+            title_id,
+            v[1], v[2], v[3], v[4], v[5],
+            v[6], v[7], v[8], v[9], v[10],
+            rec["total_votes"],
+        ),
+    )
+    conn.commit()
+    return True

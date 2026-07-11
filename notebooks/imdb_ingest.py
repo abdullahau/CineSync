@@ -2,11 +2,17 @@ import random
 import sqlite3
 import time
 from cinesync.paths import DB_PATH
-from cinesync.ingestion.imdb_fetch import new_session, fetch_title
-from cinesync.ingestion.imdb_parser import parse
+from cinesync.ingestion.imdb_fetch import (
+    new_session,
+    fetch_title,
+    fetch_ratings_histogram,
+)
+from cinesync.ingestion.imdb_parser import parse, parse_ratings_histogram
 from cinesync.ingestion.db_crud import (
     titles_missing_imdb_enrichment,
     upsert_imdb_enrichment,
+    titles_missing_imdb_rating_dist,
+    upsert_imdb_rating_dist,
 )
 from cinesync.ingestion.imdb_dataset import (
     load_title_id_map,
@@ -44,6 +50,29 @@ try:
         status = "ok" if "error" not in rec else f"ERR: {rec['error']}"
         print(f"[{i}/{len(work)}] {imdb_id} -> {status}")
         if i < len(work):
+            time.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
+finally:
+    conn.close()
+
+# --- Ratings-distribution pass (title_imdb_rating_dist) ---------------------
+# Separate resume-safe work list: titles with a valid imdb_id and no
+# distribution row yet. Independent of the enrichment pass above.
+conn = sqlite3.connect(DB_PATH)
+hist_work = titles_missing_imdb_rating_dist(conn)  # [(title_id, imdb_id), ...]
+print(f"{len(hist_work)} titles missing an IMDb ratings distribution.")
+
+session = new_session()
+try:
+    for i, (title_id, imdb_id) in enumerate(hist_work, 1):
+        res = fetch_ratings_histogram(session, imdb_id)
+        if "error" in res:
+            print(f"[{i}/{len(hist_work)}] {imdb_id} -> ERR: {res['error']}")
+        else:
+            rec = parse_ratings_histogram(res["title"])
+            wrote = upsert_imdb_rating_dist(conn, title_id, rec)
+            status = f"ok ({rec['total_votes']} votes)" if wrote else "no ratings"
+            print(f"[{i}/{len(hist_work)}] {imdb_id} -> {status}")
+        if i < len(hist_work):
             time.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
 finally:
     conn.close()

@@ -78,7 +78,6 @@ embeddings:
 
 apis:
   tmdb_api_key: ${TMDB_API_KEY}
-  omdb_api_key: ${OMDB_API_KEY}
   reddit:
     client_id: ${REDDIT_CLIENT_ID}
     client_secret: ${REDDIT_CLIENT_SECRET}

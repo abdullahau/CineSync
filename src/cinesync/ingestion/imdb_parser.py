@@ -35,3 +35,26 @@ def parse(title):
         ],
         "genres": [g["text"] for g in title.get("genres", {}).get("genres", [])],
     }
+
+
+def parse_ratings_histogram(title):
+    """IMDb title JSON (ratingsSummary + aggregateRatingsBreakdown) -> rating
+    distribution record. No 'error' key -- the driver adds that on fetch
+    failure. `votes` is a {1..10: voteCount} dict (None for any absent bucket);
+    `total_votes` is ratingsSummary.voteCount, which equals the bucket sum;
+    `aggregate_rating` is the 0-10 mean, kept only for a cross-check against
+    title_scores.imdb_rating. A title with no ratings yields empty votes and a
+    None/0 total."""
+    buckets = (
+        (title.get("aggregateRatingsBreakdown") or {})
+        .get("histogram", {})
+        .get("histogramValues", [])
+    )
+    votes = {b["rating"]: b["voteCount"] for b in buckets}
+    summary = title.get("ratingsSummary") or {}
+    return {
+        "imdb_id": title.get("id"),
+        "votes": {i: votes.get(i) for i in range(1, 11)},
+        "total_votes": summary.get("voteCount"),
+        "aggregate_rating": summary.get("aggregateRating"),
+    }
