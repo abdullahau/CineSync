@@ -36,7 +36,7 @@ CREATE TABLE title_plots (
     wikipedia_plot  TEXT,   -- Wikipedia "Plot" section
     tagline         TEXT,
     imdb_error      TEXT,   -- NULL on success
-    imdb_fetched_at TEXT,   -- NULL until the IMDb scraper has run for this title
+    imdb_fetched_at TEXT    -- NULL until the IMDb scraper has run for this title
 );
 
 -- Genres (titles 1:M title_genres)
