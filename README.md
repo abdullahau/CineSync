@@ -1,7 +1,7 @@
 # CineSync
 
 Local, notebook-based movie/TV recommendation system for an individual,
-couple, or small group. Built from Letterboxd ratings, TMDB/OMDb
+couple, or small group. Built from Letterboxd ratings, TMDB
 metadata, and your own feedback over time.
 
 ## Phase 0 -- what's in this folder
@@ -27,7 +27,7 @@ uv run python src/init_db.py
 
 Then open `config.yaml` and:
 1. Confirm/edit the `people` list.
-2. Add your TMDB and OMDb API keys (both free).
+2. Add your TMDB (free).
 3. Add Reddit API credentials if you want the buzz score later
    (Phase 7) -- not needed yet.
 
@@ -53,7 +53,7 @@ Then open `config.yaml` and:
 
 | Phase | Notebook | What it does |
 |---|---|---|
-| 1 | `01_collect.ipynb` | Import Letterboxd ratings, enrich via TMDB/OMDb |
+| 1 | `01_collect.ipynb` | Import Letterboxd ratings, enrich via TMDB |
 | 1b | `01b_candidate_pool.ipynb` | Per-language TMDB discover pulls -> candidate universe |
 | 2 | `02_features.ipynb` | Encode genre/cast/credits, sentence-transformer embeddings |
 | 3 | `03_clusters.ipynb` | UMAP + HDBSCAN taste maps, per person |

@@ -7,10 +7,6 @@ Call TMDB like this for BOTH movie and TV:
     Movie:  /movie/{id}?append_to_response=keywords,credits,external_ids
     TV:     /tv/{id}?append_to_response=keywords,credits,external_ids
 
-external_ids fetches both imdb_id (for OMDb critic scores) and
-wikidata_id (for the Wikipedia plot lookup -- query Wikidata's
-wbgetentities by this id directly)
-
 Usage:
     from parse_tmdb import parse_tmdb_response
     parsed = parse_tmdb_response(raw_json, content_type="movie", source="tmdb_discover")

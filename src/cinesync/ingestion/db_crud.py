@@ -131,7 +131,7 @@ def known_tmdb_ids(conn, content_type: str) -> set:
     return {r[0] for r in rows}
 
 
-# TODO: OMDb (omdb_awards_text and title_score) & Wikipedia (title_awards and detailed_plot) upsert.
+# TODO: Wikipedia (title_awards and detailed_plot) upsert.
 
 
 # ===========================================================================
