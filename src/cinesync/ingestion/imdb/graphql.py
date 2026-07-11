@@ -5,10 +5,11 @@ from curl_cffi import requests
 
 ENDPOINT = "https://caching.graphql.imdb.com/"
 OPERATION = "Title_Storyline"
-# SHA-256 of IMDb's Title_Storyline persisted query, baked into their JS bundle.
-# Same for every title; refresh from DevTools if you start getting
-# "PersistedQueryNotFound".
-SHA256 = "bbf29ee4ceeefcf2d0825e0e57e3821aa2e11166b7cf820e1b40fb21095d7b08"
+# The SHA-256 of IMDb's Title_Storyline persisted query (baked into their JS
+# bundle, same for every title) is NOT hardcoded here -- it rotates whenever
+# IMDb rebuilds their bundle, so it lives in config (apis.imdb.storyline_sha256,
+# sourced from the IMDB_STORYLINE_SHA256 env var) and is passed in per call.
+# Refresh it from DevTools if you start getting "PersistedQueryNotFound".
 
 HEADERS = {
     "accept": "application/graphql+json, application/json",
@@ -52,7 +53,7 @@ def _batch_element(result):
     return {"title": title} if title else {"error": "no title in response"}
 
 
-async def fetch_enrichment_batch(session, imdb_id, *, max_retries, timeout):
+async def fetch_enrichment_batch(session, imdb_id, *, sha256, max_retries, timeout):
     """Fetch storyline + worldwide ratings histogram for one title in a SINGLE
     batched GraphQL POST (a JSON array of the persisted Title_Storyline op and
     the inline TitleRatingsHistogram op). Returns
@@ -65,8 +66,9 @@ async def fetch_enrichment_batch(session, imdb_id, *, max_retries, timeout):
     that op only, so one side can succeed while the other fails. Batch reply is
     array-ordered to the request, so index 0=storyline, 1=histogram.
 
-    Network + retry only (max_retries/timeout come from rate_limiting.imdb via
-    the driver); steady-state pacing is the caller's AsyncRateGate."""
+    Network + retry only (sha256 comes from apis.imdb.storyline_sha256,
+    max_retries/timeout from rate_limiting.imdb, all via the driver);
+    steady-state pacing is the caller's AsyncRateGate."""
     ops = [
         {
             "operationName": OPERATION,
@@ -75,7 +77,7 @@ async def fetch_enrichment_batch(session, imdb_id, *, max_retries, timeout):
                 "locale": "en-US",
                 "titleId": imdb_id,
             },
-            "extensions": {"persistedQuery": {"sha256Hash": SHA256, "version": 1}},
+            "extensions": {"persistedQuery": {"sha256Hash": sha256, "version": 1}},
         },
         {
             "operationName": RATINGS_OPERATION,

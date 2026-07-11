@@ -1,8 +1,10 @@
 import sqlite3
 import asyncio
+import json
 import time
+from datetime import datetime, timezone
 
-from cinesync.paths import DB_PATH
+from cinesync.paths import DB_PATH, LOGS_DIR
 from cinesync.config_loader import load_config
 from cinesync.ingestion.imdb import graphql, parse, bulk
 from cinesync.ingestion import crud
@@ -15,12 +17,37 @@ GENRE_MAP = {
     "Reality-TV": "Reality",
 }
 
-_rl = load_config()["rate_limiting"]["imdb"]
-CONCURRENCY = _rl["concurrency"]      # max in-flight GraphQL requests
-MIN_INTERVAL = _rl["min_interval"]    # global even-spacing floor between requests
-MAX_RETRIES = _rl["max_retries"]      # per-request 403/429/5xx retries in graphql.*
+_cfg = load_config()
+_rl = _cfg["rate_limiting"]["imdb"]
+CONCURRENCY = _rl["concurrency"]
+MIN_INTERVAL = _rl["min_interval"]
+MAX_RETRIES = _rl["max_retries"]
 TIMEOUT = _rl["timeout"]
+STORYLINE_SHA256 = _cfg["apis"]["imdb"]["storyline_sha256"]
 PROGRESS_EVERY = 100
+
+FAILURE_LOG_PATH = LOGS_DIR / "imdb_enrichment_failures.jsonl"
+
+
+def log_failure(
+    title_id: str,
+    imdb_id: str,
+    stage: str,
+    error_msg: str,
+) -> None:
+    """Append one failed sub-fetch to the JSONL side log. `stage` is
+    'storyline' | 'histogram' | an exception class name (malformed response);
+    same one-line-per-failure shape as letterboxd_ingest's log_failure."""
+    entry = {
+        "title_id": title_id,
+        "imdb_id": imdb_id,
+        "stage": stage,
+        "error_message": error_msg[:300],
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    with open(FAILURE_LOG_PATH, "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry) + "\n")
+
 
 # ============================ bulk datasets =============================
 conn = sqlite3.connect(DB_PATH)
@@ -58,7 +85,11 @@ async def enrich():
         async with sem:
             await gate.wait()
             batch = await graphql.fetch_enrichment_batch(
-                session, imdb_id, max_retries=MAX_RETRIES, timeout=TIMEOUT
+                session,
+                imdb_id,
+                sha256=STORYLINE_SHA256,
+                max_retries=MAX_RETRIES,
+                timeout=TIMEOUT,
             )
             return title_id, imdb_id, batch
 
@@ -75,10 +106,13 @@ async def enrich():
                 # storyline -> title_plots / genres / imdb keywords. upsert_imdb_
                 # enrichment's own error path records imdb_error and preserves text.
                 s = batch["storyline"]
-                srec = {"error": s["error"]} if "error" in s else parse.parse(s["title"])
+                srec = (
+                    {"error": s["error"]} if "error" in s else parse.parse(s["title"])
+                )
                 crud.upsert_imdb_enrichment(conn, title_id, srec, genre_map=GENRE_MAP)
                 if "error" in srec:
                     story_err += 1
+                    log_failure(title_id, imdb_id, "storyline", srec["error"])
                 else:
                     story_ok += 1
 
@@ -86,6 +120,7 @@ async def enrich():
                 h = batch["histogram"]
                 if "error" in h:
                     hist_err += 1
+                    log_failure(title_id, imdb_id, "histogram", h["error"])
                 else:
                     crud.upsert_imdb_rating_dist(
                         conn, title_id, parse.parse_ratings_histogram(h["title"])
@@ -96,6 +131,7 @@ async def enrich():
                 # title simply stays on the resume list for the next pass.
                 story_err += 1
                 hist_err += 1
+                log_failure(title_id, imdb_id, type(exc).__name__, str(exc))
                 print(f"  ! {imdb_id}: {type(exc).__name__}: {exc}")
                 continue
 
@@ -111,6 +147,13 @@ async def enrich():
     finally:
         conn.close()
         await session.close()
+
+    print(
+        f"\nDone. story ok={story_ok} err={story_err} | "
+        f"hist ok={hist_ok} err={hist_err} out of {total}."
+    )
+    if story_err or hist_err:
+        print(f"Failure details: {FAILURE_LOG_PATH}")
 
 
 if __name__ == "__main__":

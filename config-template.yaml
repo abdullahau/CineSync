@@ -109,3 +109,8 @@ apis:
     client_id: ${REDDIT_CLIENT_ID}
     client_secret: ${REDDIT_CLIENT_SECRET}
     user_agent: "cinesync/0.1 by ${REDDIT_USERNAME}"
+  imdb:
+    # SHA-256 of IMDb's Title_Storyline persisted GraphQL query. Rotates when
+    # IMDb rebuilds their JS bundle; refresh from DevTools on a run-wide
+    # "PersistedQueryNotFound" and update IMDB_STORYLINE_SHA256 in .env.
+    storyline_sha256: ${IMDB_STORYLINE_SHA256}
