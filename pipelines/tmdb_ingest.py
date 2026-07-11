@@ -2,10 +2,8 @@ import csv, sqlite3, requests, threading, time
 from datetime import date
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from cinesync.ingestion.tmdb_fetch import fetch_discover_page, fetch_title_details
-from cinesync.ingestion.tmdb_parser import parse_tmdb_response
-from cinesync.ingestion.db_crud import upsert_tmdb_title, known_tmdb_ids
-from cinesync.ingestion.date_windows import resolve_windows, earliest_date
+from cinesync.ingestion.tmdb import fetch, parse, date_windows
+from cinesync.ingestion import crud
 from cinesync.paths import DB_PATH, DATA_DIR
 from cinesync.config_loader import load_config
 from cinesync.utils.net import force_ipv4
@@ -39,17 +37,17 @@ def get_session(thread_local):
 
 def fetch_only(tmdb_id, content_type, source, thread_local):
     """Runs in a worker thread: network + parse only, no DB access."""
-    details = fetch_title_details(
+    details = fetch.fetch_title_details(
         content_type, tmdb_id, tmdb_api_key, get_session(thread_local)
     )
-    return tmdb_id, parse_tmdb_response(
+    return tmdb_id, parse.parse_tmdb_response(
         details, content_type=content_type, source=source
     )
 
 
 def probe_window(gte, lte, content_type, session, **params):
     """fetch page 1 of a candidate window and report (total_pages, total_results)"""
-    payload = fetch_discover_page(
+    payload = fetch.fetch_discover_page(
         content_type, 1, tmdb_api_key, session, date_gte=gte, date_lte=lte, **params
     )
     return payload.get("total_pages", 1), payload.get("total_results", 0)
@@ -65,18 +63,18 @@ def run_sweep(content_type, params, source_label, date_gte=None):
     """
     print(f"\n=== {source_label} | {content_type.upper()} ===")
     probe_session = requests.Session()
-    known_ids = known_tmdb_ids(conn, content_type)
+    known_ids = crud.known_tmdb_ids(conn, content_type)
     ignored_ids = load_ignored_ids(content_type)
     thread_local = threading.local()
 
     if date_gte is None:
-        floor_probe = fetch_discover_page(
+        floor_probe = fetch.fetch_discover_page(
             content_type, 1, tmdb_api_key, probe_session, date_lte=CEILING, **params
         )
-        date_gte = earliest_date(floor_probe, content_type) or "1900-01-01"
+        date_gte = date_windows.earliest_date(floor_probe, content_type) or "1900-01-01"
     print(f"Range: {date_gte} to {CEILING}")
 
-    control = fetch_discover_page(
+    control = fetch.fetch_discover_page(
         content_type,
         1,
         tmdb_api_key,
@@ -88,7 +86,7 @@ def run_sweep(content_type, params, source_label, date_gte=None):
     probe_total_results = control.get("total_results", 0)
     print(f"Control total: {probe_total_results} ({control.get('total_pages')} pages)")
 
-    windows = resolve_windows(
+    windows = date_windows.resolve_windows(
         probe_window, date_gte, CEILING, content_type, probe_session, **params
     )
     print(f"Resolved {len(windows)} window(s)")
@@ -105,7 +103,7 @@ def run_sweep(content_type, params, source_label, date_gte=None):
         window_start = time.monotonic()
 
         for page in range(1, pages + 1):
-            payload = fetch_discover_page(
+            payload = fetch.fetch_discover_page(
                 content_type,
                 page,
                 tmdb_api_key,
@@ -143,7 +141,7 @@ def run_sweep(content_type, params, source_label, date_gte=None):
                             f"    ! failed tmdb_id={tmdb_id}: {type(exc).__name__}: {exc}"
                         )
                         continue
-                    upsert_tmdb_title(conn, parsed)
+                    crud.upsert_tmdb_title(conn, parsed)
                     known_ids.add(tmdb_id)
                     total_fetched += 1
                     page_fetched += 1

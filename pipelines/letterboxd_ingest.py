@@ -8,10 +8,7 @@ from datetime import datetime, timezone
 import curl_cffi.requests as requests
 from parsel import Selector
 from cinesync.paths import DB_PATH, LOGS_DIR
-from cinesync.ingestion.db_crud import (
-    titles_missing_letterboxd_stats,
-    upsert_letterboxd_stats,
-)
+from cinesync.ingestion import crud
 
 
 CONCURRENCY = 8
@@ -210,7 +207,7 @@ async def main():
     # Titles with no Letterboxd stats row yet — the anti-join is the resume
     # mechanism. No imdb_id filter: titles without one fall back to the TMDB
     # slug (movies only), so they're still worth attempting.
-    to_scrape = titles_missing_letterboxd_stats(conn)
+    to_scrape = crud.titles_missing_letterboxd_stats(conn)
 
     total = len(to_scrape)
     no_imdb = sum(1 for _, imdb, _, _ in to_scrape if not imdb)
@@ -242,7 +239,7 @@ async def main():
         for coro in asyncio.as_completed(tasks):
             result = await coro
             if result is not None:
-                upsert_letterboxd_stats(conn, result)
+                crud.upsert_letterboxd_stats(conn, result)
                 success_count += 1
             else:
                 fail_count += 1
