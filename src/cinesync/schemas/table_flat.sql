@@ -31,11 +31,6 @@ credits_agg AS (
     FROM title_credits
     GROUP BY title_id
 ),
-crew_extra_agg AS (
-    SELECT title_id, GROUP_CONCAT(job || ': ' || name, ', ') AS crew_extra
-    FROM title_crew_extra
-    GROUP BY title_id
-),
 scores_agg AS (
     SELECT
         title_id,
@@ -100,7 +95,6 @@ SELECT
     cr.writers,
     cr.creators,
     cr.cast_members,
-    ce.crew_extra,
     p.tagline,
     p.imdb_outline,
     p.imdb_summary,
@@ -115,20 +109,19 @@ SELECT
     lb.lb_lists,
     lb.lb_likes,
     lb.lb_top_rank,
-    s.rt_critic,
-    s.rt_audience,
+    s.tmdb_rating,
+    s.tmdb_rating_count,    
     s.imdb_rating,
     s.imdb_rating_count,
-    s.tmdb_rating,
-    s.tmdb_rating_count,
     id.imdb_dist_total_votes,
     id.imdb_hist_implied_rating
+    s.rt_critic,
+    s.rt_audience,    
 FROM titles t
 LEFT JOIN genres_agg     g  ON g.title_id  = t.title_id
 LEFT JOIN keywords_agg   k  ON k.title_id  = t.title_id
 LEFT JOIN companies_agg  c  ON c.title_id  = t.title_id
 LEFT JOIN credits_agg    cr ON cr.title_id = t.title_id
-LEFT JOIN crew_extra_agg ce ON ce.title_id = t.title_id
 LEFT JOIN title_plots    p  ON p.title_id  = t.title_id
 LEFT JOIN letterboxd_agg lb ON lb.title_id = t.title_id
 LEFT JOIN scores_agg     s  ON s.title_id  = t.title_id

@@ -1,7 +1,6 @@
+import asyncio
 import json
 import random
-import time
-from urllib.parse import quote
 from curl_cffi import requests
 
 ENDPOINT = "https://caching.graphql.imdb.com/"
@@ -37,46 +36,10 @@ RATINGS_QUERY = (
 
 
 def new_session():
-    return requests.Session()
-
-
-def build_url(imdb_id):
-    variables = {
-        "isInMachineTranslateWeblab": True,
-        "locale": "en-US",
-        "titleId": imdb_id,
-    }
-    extensions = {"persistedQuery": {"sha256Hash": SHA256, "version": 1}}
-    return (
-        f"{ENDPOINT}?operationName={OPERATION}"
-        f"&variables={quote(json.dumps(variables, separators=(',', ':')))}"
-        f"&extensions={quote(json.dumps(extensions, separators=(',', ':')))}"
-    )
-
-
-def fetch_title(session, imdb_id, retries=4):
-    """Returns {'title': <raw title json>} on success or {'error': str} on
-    failure. Network + retry only -- parsing lives in imdb_parser."""
-    url = build_url(imdb_id)
-    last = ""
-    for attempt in range(retries):
-        try:
-            r = session.get(url, headers=HEADERS, impersonate="chrome", timeout=25)
-            if r.status_code == 200:
-                data = r.json()
-                if data.get("errors"):
-                    return {"error": json.dumps(data["errors"])[:300]}
-                title = (data.get("data") or {}).get("title")
-                return {"title": title} if title else {"error": "no title in response"}
-            if r.status_code in (403, 429, 500, 502, 503):
-                last = f"HTTP {r.status_code}"
-                time.sleep((2**attempt) + random.uniform(0, 1))
-                continue
-            return {"error": f"HTTP {r.status_code}: {r.text[:200]}"}
-        except Exception as e:
-            last = str(e)
-            time.sleep((2**attempt) + random.uniform(0, 1))
-    return {"error": f"failed after {retries} retries: {last}"}
+    """curl_cffi AsyncSession with Chrome TLS impersonation -- IMDb's GraphQL
+    edge blocks non-browser fingerprints. Impersonation is set once here rather
+    than per request."""
+    return requests.AsyncSession(impersonate="chrome")
 
 
 def _batch_element(result):
@@ -89,18 +52,21 @@ def _batch_element(result):
     return {"title": title} if title else {"error": "no title in response"}
 
 
-def fetch_enrichment_batch(session, imdb_id, retries=4):
+async def fetch_enrichment_batch(session, imdb_id, *, max_retries, timeout):
     """Fetch storyline + worldwide ratings histogram for one title in a SINGLE
     batched GraphQL POST (a JSON array of the persisted Title_Storyline op and
     the inline TitleRatingsHistogram op). Returns
 
         {"storyline": {'title'|'error'}, "histogram": {'title'|'error'}}
 
-    where each side follows fetch_title's contract, so imdb_parser.parse and
+    where each side follows the {'title'|'error'} contract, so parse.parse and
     parse_ratings_histogram apply unchanged. HTTP-level failures (403/429/5xx)
     retry the WHOLE batch with backoff; a per-op GraphQL error is reported for
     that op only, so one side can succeed while the other fails. Batch reply is
-    array-ordered to the request, so index 0=storyline, 1=histogram."""
+    array-ordered to the request, so index 0=storyline, 1=histogram.
+
+    Network + retry only (max_retries/timeout come from rate_limiting.imdb via
+    the driver); steady-state pacing is the caller's AsyncRateGate."""
     ops = [
         {
             "operationName": OPERATION,
@@ -119,11 +85,9 @@ def fetch_enrichment_batch(session, imdb_id, retries=4):
     ]
     body = json.dumps(ops)
     last = ""
-    for attempt in range(retries):
+    for attempt in range(max_retries):
         try:
-            r = session.post(
-                ENDPOINT, headers=HEADERS, data=body, impersonate="chrome", timeout=25
-            )
+            r = await session.post(ENDPOINT, headers=HEADERS, data=body, timeout=timeout)
             if r.status_code == 200:
                 data = r.json()
                 if not isinstance(data, list) or len(data) != 2:
@@ -135,48 +99,12 @@ def fetch_enrichment_batch(session, imdb_id, retries=4):
                 }
             if r.status_code in (403, 429, 500, 502, 503):
                 last = f"HTTP {r.status_code}"
-                time.sleep((2**attempt) + random.uniform(0, 1))
+                await asyncio.sleep((2**attempt) + random.uniform(0, 1))
                 continue
             err = {"error": f"HTTP {r.status_code}: {r.text[:200]}"}
             return {"storyline": dict(err), "histogram": dict(err)}
         except Exception as e:
             last = str(e)
-            time.sleep((2**attempt) + random.uniform(0, 1))
-    err = {"error": f"failed after {retries} retries: {last}"}
+            await asyncio.sleep((2**attempt) + random.uniform(0, 1))
+    err = {"error": f"failed after {max_retries} retries: {last}"}
     return {"storyline": dict(err), "histogram": dict(err)}
-
-
-def fetch_ratings_histogram(session, imdb_id, retries=4):
-    """Worldwide IMDb ratings histogram via an inline (non-persisted) GraphQL
-    POST. Returns {'title': <raw title json>} (carrying ratingsSummary +
-    aggregateRatingsBreakdown) on success, or {'error': str}. Same contract,
-    endpoint, headers, and backoff as fetch_title -- network + retry only,
-    parsing lives in imdb_parser."""
-    body = json.dumps(
-        {
-            "operationName": RATINGS_OPERATION,
-            "query": RATINGS_QUERY,
-            "variables": {"id": imdb_id},
-        }
-    )
-    last = ""
-    for attempt in range(retries):
-        try:
-            r = session.post(
-                ENDPOINT, headers=HEADERS, data=body, impersonate="chrome", timeout=25
-            )
-            if r.status_code == 200:
-                data = r.json()
-                if data.get("errors"):
-                    return {"error": json.dumps(data["errors"])[:300]}
-                title = (data.get("data") or {}).get("title")
-                return {"title": title} if title else {"error": "no title in response"}
-            if r.status_code in (403, 429, 500, 502, 503):
-                last = f"HTTP {r.status_code}"
-                time.sleep((2**attempt) + random.uniform(0, 1))
-                continue
-            return {"error": f"HTTP {r.status_code}: {r.text[:200]}"}
-        except Exception as e:
-            last = str(e)
-            time.sleep((2**attempt) + random.uniform(0, 1))
-    return {"error": f"failed after {retries} retries: {last}"}

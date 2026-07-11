@@ -2,17 +2,21 @@ import sqlite3
 import asyncio
 import re
 import json
-import random
 import time
 from datetime import datetime, timezone
 import curl_cffi.requests as requests
 from parsel import Selector
 from cinesync.paths import DB_PATH, LOGS_DIR
+from cinesync.config_loader import load_config
 from cinesync.ingestion import crud
+from cinesync.utils.net import AsyncRateGate, paced_request_async
 
 
-CONCURRENCY = 8
-DELAY_RANGE = (0.5, 1.5)  # jitter after every request (success OR failure)
+_rl = load_config()["rate_limiting"]["letterboxd"]
+CONCURRENCY = _rl["concurrency"]
+MIN_INTERVAL = _rl["min_interval"]    # global even-spacing floor between requests
+MAX_RETRIES = _rl["max_retries"]      # per-request 429/5xx + connection retries
+TIMEOUT = _rl["timeout"]
 PROGRESS_EVERY = 100  # print a progress/ETA line every N completions
 
 FAILURE_LOG_PATH = LOGS_DIR / "letterboxd_scrape_failures.jsonl"
@@ -25,6 +29,8 @@ BASE_HEADERS = {
 }
 
 session = requests.AsyncSession(impersonate="chrome124")
+# Global rate gate shared across all coroutines; every outbound request awaits it.
+gate = AsyncRateGate(MIN_INTERVAL)
 
 
 def log_failure(
@@ -67,9 +73,12 @@ async def resolve_film_page(imdb_id: str | None, tmdb_id: int, content_type: str
         raise ValueError("No resolvable route: TV title without an imdb_id")
 
     last_error = None
-    for i, (route, url) in enumerate(routes):
+    for route, url in routes:
         try:
-            r = await session.get(url, headers=BASE_HEADERS, timeout=15)
+            r = await paced_request_async(
+                session, url, gate=gate, max_retries=MAX_RETRIES,
+                timeout=TIMEOUT, headers=BASE_HEADERS,
+            )
             r.raise_for_status()
 
             slug_match = re.search(r"/film/([^/]+)/?", r.url)
@@ -92,9 +101,7 @@ async def resolve_film_page(imdb_id: str | None, tmdb_id: int, content_type: str
             return slug, ld_data, r.url, route
         except Exception as e:
             last_error = e
-            # Pace the fallback request like any other (only if one remains).
-            if i < len(routes) - 1:
-                await asyncio.sleep(random.uniform(*DELAY_RANGE))
+            # Fallback pacing is handled by the shared rate gate on the next request.
 
     raise last_error or ValueError("No Letterboxd film page resolved")
 
@@ -126,15 +133,13 @@ async def get_letterboxd_data(
                 "Sec-Fetch-Site": "same-origin",
             }
 
-            hist_task = session.get(
-                f"https://letterboxd.com/csi/film/{slug}/rating-histogram/",
-                headers=csi_headers,
-                timeout=15,
+            hist_task = paced_request_async(
+                session, f"https://letterboxd.com/csi/film/{slug}/rating-histogram/",
+                gate=gate, max_retries=MAX_RETRIES, timeout=TIMEOUT, headers=csi_headers,
             )
-            stats_task = session.get(
-                f"https://letterboxd.com/csi/film/{slug}/stats/",
-                headers=csi_headers,
-                timeout=15,
+            stats_task = paced_request_async(
+                session, f"https://letterboxd.com/csi/film/{slug}/stats/",
+                gate=gate, max_retries=MAX_RETRIES, timeout=TIMEOUT, headers=csi_headers,
             )
             r_hist, r_stats = await asyncio.gather(hist_task, stats_task)
 
@@ -197,8 +202,6 @@ async def get_letterboxd_data(
         except Exception as e:
             log_failure(title_id, imdb_id, tmdb_id, type(e).__name__, str(e))
             return None
-        finally:
-            await asyncio.sleep(random.uniform(*DELAY_RANGE))
 
 
 async def main():

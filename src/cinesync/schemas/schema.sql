@@ -29,14 +29,16 @@ CREATE TABLE titles (
 
 -- Long-form plot text, 1:1 with titles. Written by IMDb scraper + Wikipedia.
 CREATE TABLE title_plots (
-    title_id        TEXT NOT NULL PRIMARY KEY REFERENCES titles(title_id),
-    imdb_outline    TEXT,   -- IMDb short one-liner
-    imdb_summary    TEXT,   -- IMDb medium plot summary
-    imdb_synopsis   TEXT,   -- IMDb long detailed synopsis
-    wikipedia_plot  TEXT,   -- Wikipedia "Plot" section
-    tagline         TEXT,
-    imdb_error      TEXT,   -- NULL on success
-    imdb_fetched_at TEXT    -- NULL until the IMDb scraper has run for this title
+    title_id             TEXT NOT NULL PRIMARY KEY REFERENCES titles(title_id),
+    imdb_outline         TEXT,   -- IMDb short one-liner
+    imdb_summary         TEXT,   -- IMDb medium plot summary
+    imdb_synopsis        TEXT,   -- IMDb long detailed synopsis
+    wikipedia_plot       TEXT,   -- Wikipedia "Plot" section
+    tagline              TEXT,
+    imdb_error           TEXT,   -- NULL on success
+    imdb_fetched_at      TEXT,   -- NULL until the IMDb scraper has run for this title
+    wikipedia_error      TEXT,   -- NULL on success; set only on fetch failure (retryable)
+    wikipedia_fetched_at TEXT    -- NULL until the Wikipedia plot fetch has run for this title
 );
 
 -- Genres (titles 1:M title_genres)
@@ -133,14 +135,48 @@ CREATE TABLE title_imdb_rating_dist (
     fetched_at  TEXT DEFAULT (datetime('now'))
 );
 
--- Awards received (P166) and nominations (P1411)
+-- Awards received (P166) and nominations (P1411), from Wikidata. One row per
+-- award statement: title-level (Best Picture) and person-level (an actor's win,
+-- via the P1686 "for work" qualifier) both land here, distinguished by `level`.
+-- `statement_id` is Wikidata's statement GUID -- the natural dedup key, so a
+-- re-fetch full-replaces this title's rows idempotently. Counts/prestige
+-- rollups are derived in pandas, not stored.
 CREATE TABLE title_awards (
-    title_id   TEXT NOT NULL REFERENCES titles(title_id),
-    award_name TEXT NOT NULL,        -- e.g. 'Cannes Film Festival: Palme d'Or'
-    result     TEXT NOT NULL CHECK (result IN ('won','nominated')),
-    year       INTEGER,
-    source     TEXT DEFAULT 'wikidata',
-    PRIMARY KEY (title_id, award_name, result, year)
+    title_id     TEXT NOT NULL REFERENCES titles(title_id),
+    statement_id TEXT NOT NULL,      -- Wikidata ?st statement URI (natural dedup key)
+    award_name   TEXT NOT NULL,
+    result       TEXT NOT NULL CHECK (result IN ('won','nominated')),
+    prestige     TEXT,               -- 'Oscars'/'BAFTA'/... or NULL if not a tracked family
+    level        TEXT NOT NULL CHECK (level IN ('title','person')),
+    subject      TEXT,               -- person name for level='person'; NULL for level='title'
+    year         INTEGER,
+    source       TEXT DEFAULT 'wikidata',
+    PRIMARY KEY (title_id, statement_id)
+);
+
+-- Single-valued outputs of the Wikidata SPARQL pass + its fetch state.
+-- (Awards fan out to title_awards; the RT slug lives in title_rt.)
+-- wikidata_fetched_at is the done-flag: a title that legitimately won nothing
+-- has zero title_awards rows, so "no award rows" can't mean "not fetched yet".
+CREATE TABLE title_wikidata_meta (
+    title_id            TEXT NOT NULL PRIMARY KEY REFERENCES titles(title_id),
+    wikipedia_url       TEXT,
+    wikidata_fetched_at TEXT,
+    wikidata_error      TEXT
+);
+
+-- Rotten Tomatoes page link + how it was resolved. Standalone because link
+-- resolution is its own multi-source process: the Wikidata pass fills slugs for
+-- popular titles that carry P1258, and a later search-engine fallback
+-- (DuckDuckGo/Bing) resolves the rest. RT *ratings* are NOT here -- they land in
+-- title_scores (rt_critic/rt_audience); this table is the slug the ratings
+-- scrape consumes.
+CREATE TABLE title_rt (
+    title_id    TEXT NOT NULL PRIMARY KEY REFERENCES titles(title_id),
+    rt_slug     TEXT,   -- 'm/titanic' / 'tv/breaking_bad'; NULL if unresolved. Build URL at read time.
+    source      TEXT,   -- resolver: 'wikidata','duckduckgo','bing','manual'
+    resolved_at TEXT,   -- when a slug was found; NULL while unresolved
+    last_error  TEXT    -- last resolver note, e.g. 'no P1258','not_found'
 );
 
 -- Popularity & mention time series

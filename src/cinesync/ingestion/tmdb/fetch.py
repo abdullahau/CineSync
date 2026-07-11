@@ -1,4 +1,4 @@
-from cinesync.utils.net import paced_get
+from cinesync.utils.net import paced_request
 
 TMDB_BASE = "https://api.themoviedb.org/3"
 
@@ -81,7 +81,7 @@ def fetch_title_details(content_type: str, tmdb_id: int, api_key: str, session) 
         "accept": "application/json",
         "Authorization": f"Bearer {api_key}",
     }
-    response = paced_get(session, url, params, headers)
+    response = paced_request(session, url, service="tmdb", params=params, headers=headers)
     response.raise_for_status()
     return response.json()
 
@@ -104,7 +104,7 @@ def fetch_discover_page(
         "accept": "application/json",
         "Authorization": f"Bearer {api_key}",
     }
-    response = paced_get(session, url, params, headers)
+    response = paced_request(session, url, service="tmdb", params=params, headers=headers)
     response.raise_for_status()
     return response.json()
 
@@ -119,7 +119,7 @@ def fetch_recommendations_page(
         "accept": "application/json",
         "Authorization": f"Bearer {api_key}",
     }
-    response = paced_get(session, url, params, headers)
+    response = paced_request(session, url, service="tmdb", params=params, headers=headers)
     response.raise_for_status()
     return response.json()
 

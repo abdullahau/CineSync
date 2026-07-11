@@ -1,5 +1,6 @@
 ## TODOs:
 
+- [ ] SHA256 to move to .env and sourced through config.yaml for user adjustment
 - [ ] Figure out a way to scrape IMDB's rating-histogram scraping technique (potentially inside HTML)
 - [ ] Ensure that if a title has one person credited with the writer and director role, the name appears on both bills
 - [ ] pull `certificate`/`rating` from TMDB API.

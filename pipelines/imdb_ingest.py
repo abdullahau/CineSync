@@ -1,11 +1,12 @@
 import sqlite3
-import threading
+import asyncio
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from cinesync.paths import DB_PATH
+from cinesync.config_loader import load_config
 from cinesync.ingestion.imdb import graphql, parse, bulk
 from cinesync.ingestion import crud
+from cinesync.utils.net import AsyncRateGate
 
 # {variant: canonical}
 GENRE_MAP = {
@@ -14,9 +15,11 @@ GENRE_MAP = {
     "Reality-TV": "Reality",
 }
 
-MAX_WORKERS = 5          # worker threads: network-only, one curl_cffi session each
-REQ_PER_SEC = 8          # global cap; backoff in graphql.* handles 403/429/5xx
-MIN_INTERVAL = 1.0 / REQ_PER_SEC
+_rl = load_config()["rate_limiting"]["imdb"]
+CONCURRENCY = _rl["concurrency"]      # max in-flight GraphQL requests
+MIN_INTERVAL = _rl["min_interval"]    # global even-spacing floor between requests
+MAX_RETRIES = _rl["max_retries"]      # per-request 403/429/5xx retries in graphql.*
+TIMEOUT = _rl["timeout"]
 PROGRESS_EVERY = 100
 
 # ============================ bulk datasets =============================
@@ -29,63 +32,46 @@ bulk.run_ingestion(
 )  # download → write → delete, both files
 conn.close()
 
-# ===================== GraphQL enrichment (threaded) ====================
+# ====================== GraphQL enrichment (async) ======================
 # One batched request per title fetches storyline + ratings histogram together
-# (see graphql.fetch_enrichment_batch). Worker threads do network only; the
-# MAIN thread owns the single SQLite connection and does every write. A global
-# token bucket paces the aggregate request rate regardless of worker count.
-
-_rate_lock = threading.Lock()
-_next_slot = 0.0
+# (see graphql.fetch_enrichment_batch). All coroutines run on the one event-loop
+# thread, so the MAIN coroutine owns the single SQLite connection and does every
+# write as results arrive -- no cross-thread writes. A shared AsyncRateGate caps
+# the aggregate request rate; a Semaphore caps in-flight requests.
 
 
-def rate_limit():
-    """Reserve the next evenly-spaced request slot (thread-safe), then sleep to
-    it OUTSIDE the lock -- caps the aggregate rate at REQ_PER_SEC across all
-    workers without serializing the reservation."""
-    global _next_slot
-    with _rate_lock:
-        slot = max(time.monotonic(), _next_slot)
-        _next_slot = slot + MIN_INTERVAL
-    wait = slot - time.monotonic()
-    if wait > 0:
-        time.sleep(wait)
+async def enrich():
+    conn = sqlite3.connect(DB_PATH)
+    work = crud.titles_missing_imdb_data(conn)  # [(title_id, imdb_id), ...]
+    total = len(work)
+    print(f"{total} titles need IMDb enrichment and/or a ratings distribution.")
+    if total == 0:
+        conn.close()
+        return
 
+    gate = AsyncRateGate(MIN_INTERVAL)
+    sem = asyncio.Semaphore(CONCURRENCY)
+    session = graphql.new_session()
 
-def get_session(thread_local):
-    if not hasattr(thread_local, "session"):
-        thread_local.session = graphql.new_session()
-    return thread_local.session
+    async def fetch_one(title_id, imdb_id):
+        """Worker coroutine: gate-paced batched fetch, no DB access."""
+        async with sem:
+            await gate.wait()
+            batch = await graphql.fetch_enrichment_batch(
+                session, imdb_id, max_retries=MAX_RETRIES, timeout=TIMEOUT
+            )
+            return title_id, imdb_id, batch
 
+    done = 0
+    story_ok = story_err = hist_ok = hist_err = 0
+    start = time.monotonic()
+    tasks = [asyncio.create_task(fetch_one(t, i)) for t, i in work]
 
-def fetch_only(imdb_id, thread_local):
-    """Runs in a worker thread: rate-limited batched fetch, no DB access."""
-    rate_limit()
-    return graphql.fetch_enrichment_batch(get_session(thread_local), imdb_id)
-
-
-conn = sqlite3.connect(DB_PATH)
-work = crud.titles_missing_imdb_data(conn)  # [(title_id, imdb_id), ...]
-total = len(work)
-print(f"{total} titles need IMDb enrichment and/or a ratings distribution.")
-
-thread_local = threading.local()
-done = 0
-story_ok = story_err = hist_ok = hist_err = 0
-start = time.monotonic()
-
-try:
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-        futures = {
-            pool.submit(fetch_only, imdb_id, thread_local): (title_id, imdb_id)
-            for title_id, imdb_id in work
-        }
-        for fut in as_completed(futures):
-            title_id, imdb_id = futures.pop(fut)
+    try:
+        for coro in asyncio.as_completed(tasks):
+            title_id, imdb_id, batch = await coro
             done += 1
             try:
-                batch = fut.result()
-
                 # storyline -> title_plots / genres / imdb keywords. upsert_imdb_
                 # enrichment's own error path records imdb_error and preserves text.
                 s = batch["storyline"]
@@ -122,5 +108,10 @@ try:
                     f"hist ok={hist_ok} err={hist_err} | "
                     f"{rate:.1f} titles/s eta={eta_min:.0f}min"
                 )
-finally:
-    conn.close()
+    finally:
+        conn.close()
+        await session.close()
+
+
+if __name__ == "__main__":
+    asyncio.run(enrich())

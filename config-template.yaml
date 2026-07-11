@@ -49,11 +49,38 @@ recommendations_discovery:
   min_rating: 4.0           # seed from titles rated at/above this (0-5 scale)
   max_pages_per_seed: 2     # TMDB's relevance ordering means page 1-2 carries most of the signal
 
+# Per-service network pacing + retry, consumed by cinesync.utils.net.paced_request.
+# Edit the numbers for a given API here; endpoint URLs and User-Agent strings
+# live in code (the fetch modules), not config.
 rate_limiting:
-# Self-imposed pacing, well under TMDB's real ~40-50 req/s ceiling
-  min_interval: 0.15
-  max_retries: 5
-  timeout: [10, 30]
+  tmdb:
+    min_interval: 0.15   # ~6-7 req/s, well under TMDB's ~40-50 req/s ceiling
+    max_retries: 5
+    timeout: [10, 30]    # (connect, read) seconds
+  wikidata:
+    min_interval: 1.0    # WDQS: single-threaded, ~1 req/s
+    max_retries: 4
+    timeout: 60          # matches WDQS's server-side query timeout
+    batch_size: 40       # Q-ids per SPARQL query; keeps award fan-out under the 60s timeout
+  wikipedia:
+    min_interval: 0.5    # anonymous api.php -- keep gentle
+    max_retries: 4
+    timeout: 30
+  # IMDb + Letterboxd are both curl_cffi async scrapers (AsyncSession + semaphore),
+  # so they share one vocabulary. min_interval is a GLOBAL even-spacing floor
+  # between outbound requests (all coroutines), concurrency caps in-flight requests.
+  imdb:
+    concurrency: 5
+    min_interval: 0.125   # ~8 req/s global cap across the pool
+    max_retries: 4
+    timeout: 25
+  letterboxd:
+    concurrency: 8
+    min_interval: 0.2     # ~5 req/s global cap; tune up/down to taste (was jittered)
+    max_retries: 4
+    timeout: 15
+  # rotten_tomatoes: reserved -- add when the RT link/ratings fetcher exists.
+
 
 thresholds:
   # Below this many ratings, Phase 4 skips that person's personal
