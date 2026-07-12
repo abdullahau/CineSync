@@ -15,7 +15,6 @@ dependencies = [
     "pyyaml>=6.0.3",
     "requests>=2.34.2",
     # "scikit-learn>=1.9.0",
-    # "beautifulsoup4>=4.15.0",
     # "praw",
     # "sentence-transformers",
     # "numba>=0.59",
