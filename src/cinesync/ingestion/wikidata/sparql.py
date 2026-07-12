@@ -21,9 +21,16 @@ Everything goes through net.paced_request (plain requests, POST sparql-query,
 TSV out); pacing/retry/timeout come from rate_limiting.wikidata.
 """
 
+import re
+
 from cinesync.config_loader import load_config
 from cinesync.utils.net import paced_request
 from cinesync.ingestion.wikidata import USER_AGENT
+
+# A real Wikidata entity QID. Some P166/P1411 values are "somevalue" blank nodes,
+# skolemized as `.../.well-known/genid/...` IRIs -- not QIDs, no label, and
+# `wd:<that>` is invalid SPARQL. We filter those out.
+_QID_RE = re.compile(r"^Q\d+$")
 
 ENDPOINT = "https://qlever.dev/api/wikidata"
 HEADERS = {
@@ -176,7 +183,7 @@ def fetch_award_statements(session):
 def fetch_labels(session, qids):
     """{qid: en_label} for a set of QIDs, resolved in label_batch_size chunks.
     QIDs with no English label simply don't appear in the result."""
-    qids = [q for q in dict.fromkeys(qids) if q]  # dedup, drop falsy, keep order
+    qids = [q for q in dict.fromkeys(qids) if q and _QID_RE.match(q)]  # dedup; drop falsy + non-QID (genid) nodes
     size = _cfg()["label_batch_size"]
     labels = {}
     for i in range(0, len(qids), size):

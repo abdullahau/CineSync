@@ -5,6 +5,12 @@ separately-resolved labels, and tag prestige. Pure functions -- no network, no
 DB -- so they're unit-testable against fixtures.
 """
 
+import re
+
+# A real Wikidata award QID. Skips "somevalue" blank-node awards, whose entity is
+# a `.../genid/...` IRI -- no QID, no label, no usable award identity.
+_QID_RE = re.compile(r"^Q\d+$")
+
 # Prestige family by award-label prefix/substring. Label-matching (not family
 # QIDs) is deliberate: the families are named very consistently on Wikidata, and
 # an unmatched label fails VISIBLY (prestige=None) rather than silently. Adding a
@@ -66,6 +72,8 @@ def assemble_awards(stmt_rows, award_labels, person_labels, imdb_to_title):
         title_id = imdb_to_title.get(s["imdb_id"])
         if title_id is None:
             continue
+        if not s["award_qid"] or not _QID_RE.match(s["award_qid"]):
+            continue  # "somevalue" blank-node award -- no usable identity
         key = (title_id, s["statement_id"])
         if key in seen:
             continue

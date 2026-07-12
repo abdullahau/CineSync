@@ -1,100 +1,90 @@
 """
-Stage B: fetch a title's Plot section from its English Wikipedia article.
+Stage B: fetch a title's Plot section from English Wikipedia -- ONE TextExtracts
+request per title (whole article as PLAIN TEXT), sliced locally to the Plot
+section.
 
-Input is the article URL from the Wikidata pass (title_wikidata_meta.
-wikipedia_url). Two api.php calls: list sections, find the plot heading, fetch
-that section's HTML, strip to text. Returns
+Why one call (was two): the old approach listed the article's sections, then
+fetched the plot section's HTML -- two round trips per title, and the driver ran
+them sequentially at 2 req/s (~15h for 55k titles). TextExtracts returns the
+whole article as plain text in a single request; with `exsectionformat=wiki`,
+headings come through as `== Plot ==`, so we slice by heading level -- no HTML
+parsing, half the requests, and a small plain-text payload (vs ~1 MB of article
+HTML). Combined with async concurrency in the driver, ~10-20x faster.
 
-    {'plot': <text>|None, 'error': <str>|None}
-
-Semantics match the IMDb enrichment convention used elsewhere:
-  - success with a plot -> {'plot': text, 'error': None}
-  - article has no plot-like section -> {'plot': None, 'error': None}
-    (a legitimate, terminal outcome -- NOT retried; log-and-skip)
-  - network/API failure -> {'plot': None, 'error': msg}  (retried next run)
-
-Config lives under the `wikipedia` block; DEFAULTS apply if absent.
+Async so the driver can run many titles concurrently (capped by an AsyncRateGate
++ Semaphore). Contract unchanged: {'plot': text|None, 'error': str|None} --
+a plotless article is a terminal success (error NULL, not retried); a
+network/API failure preserves any existing text (error set, retried next run).
 """
 
+import re
 from urllib.parse import unquote
-import requests
-from parsel import Selector
-from cinesync.utils.net import paced_request
+import curl_cffi.requests as requests
+from cinesync.utils.net import paced_request_async
 from cinesync.ingestion.wikidata import USER_AGENT
 
-# Endpoint lives in code; pacing comes from rate_limiting.wikipedia. The UA's
-# contact email is imported from EMAIL env via the package USER_AGENT.
 ENDPOINT = "https://en.wikipedia.org/w/api.php"
 HEADERS = {"User-Agent": USER_AGENT}
 
 # Plot-section headings vary across articles; check them all (lowercased).
 PLOT_HEADINGS = {"plot", "plot summary", "synopsis", "premise", "plot synopsis"}
 
+# A wikitext heading line as TextExtracts emits it: `== Plot ==`, `=== Season 1 ===`.
+_HEADING = re.compile(r"(?m)^(={2,6})\s*(.+?)\s*\1\s*$")
+
 
 def new_session():
-    return requests.Session()
-
-
-def _api_get(session, params):
-    """GET api.php via the shared paced_request (retry/backoff/pacing from
-    rate_limiting.wikipedia). Raises on a persistent non-200 or connection
-    failure -- fetch_plot catches and turns it into an {'error': ...}."""
-    r = paced_request(
-        session, ENDPOINT, service="wikipedia", method="GET",
-        params=params, headers=HEADERS,
-    )
-    r.raise_for_status()
-    return r.json()
+    return requests.AsyncSession()
 
 
 def _title_from_url(wikipedia_url):
     return unquote(wikipedia_url.rsplit("/", 1)[-1])
 
 
-def strip_plot_html(html):
-    """Wikipedia section HTML -> clean plain text. Drops reference superscripts,
-    edit-section links, and <style>, then emits one line per block element
-    (paragraph / list item / subsection heading) in document order with inline
-    whitespace collapsed. One line per block (vs a naive ::text join) is what
-    preserves paragraph boundaries -- text nodes alone carry no newlines."""
-    sel = Selector(text=html)
-    sel.css("sup.reference, span.mw-editsection, style").remove()
-    lines = []
-    for block in sel.css("p, li, h2, h3, h4"):
-        txt = " ".join("".join(block.css("::text").getall()).split())
-        if txt:
-            lines.append(txt)
-    return "\n".join(lines).strip() or None
+def slice_plot(extract):
+    """Whole-article plain text (`exsectionformat=wiki`) -> the Plot section only.
+    Takes everything under the first plot-like heading down to the next heading of
+    the same-or-higher level, so plot subsections (e.g. per-season) are kept.
+    None if the article has no plot-like section."""
+    heads = list(_HEADING.finditer(extract))
+    for i, h in enumerate(heads):
+        if h.group(2).strip().lower() in PLOT_HEADINGS:
+            level = len(h.group(1))
+            end = len(extract)
+            for nxt in heads[i + 1:]:
+                if len(nxt.group(1)) <= level:  # next same/higher heading ends the section
+                    end = nxt.start()
+                    break
+            return extract[h.end():end].strip() or None
+    return None
 
 
-def fetch_plot(session, wikipedia_url):
-    """Fetch and strip the Plot section for one article URL. See module docstring
-    for the {'plot', 'error'} contract."""
-    title = _title_from_url(wikipedia_url)
+async def fetch_plot(session, wikipedia_url, *, gate, max_retries, timeout):
+    """One gate-paced TextExtracts request -> the Plot section text. See module
+    docstring for the {'plot', 'error'} contract. `maxlag=5` is MediaWiki
+    etiquette: when replica lag is high the API returns a retryable error rather
+    than adding load."""
+    page = _title_from_url(wikipedia_url)
     try:
-        secs = _api_get(
-            session,
-            {"action": "parse", "page": title, "prop": "sections", "format": "json"},
+        r = await paced_request_async(
+            session, ENDPOINT, gate=gate, max_retries=max_retries, timeout=timeout,
+            method="GET", headers=HEADERS,
+            params={
+                "action": "query", "prop": "extracts", "explaintext": "1",
+                "exsectionformat": "wiki", "redirects": "1", "maxlag": "5",
+                "format": "json", "titles": page,
+            },
         )
-        sections = (secs.get("parse") or {}).get("sections")
-        if sections is None:
-            return {"plot": None, "error": f"no parse.sections for {title!r}"}
-        idx = next(
-            (s["index"] for s in sections
-             if s.get("line", "").strip().lower() in PLOT_HEADINGS),
-            None,
-        )
-        if idx is None:
-            return {"plot": None, "error": None}  # no plot section -- terminal, don't retry
-
-        page = _api_get(
-            session,
-            {"action": "parse", "page": title, "section": idx,
-             "prop": "text", "format": "json"},
-        )
-        html = ((page.get("parse") or {}).get("text") or {}).get("*")
-        if not html:
-            return {"plot": None, "error": f"no section text for {title!r} #{idx}"}
-        return {"plot": strip_plot_html(html), "error": None}
+        if r.status_code != 200:
+            return {"plot": None, "error": f"HTTP {r.status_code}"}  # retryable
+        data = r.json()
+        if "error" in data:  # e.g. maxlag -- retryable
+            return {"plot": None, "error": str(data["error"])[:200]}
+        pages = (data.get("query") or {}).get("pages") or {}
+        page_obj = next(iter(pages.values()), {})
+        extract = page_obj.get("extract")
+        if not extract:
+            return {"plot": None, "error": None}  # no article text -> terminal
+        return {"plot": slice_plot(extract), "error": None}
     except Exception as e:
         return {"plot": None, "error": str(e)[:300]}

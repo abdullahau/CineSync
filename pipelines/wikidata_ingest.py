@@ -10,18 +10,22 @@ Stage A -- Wikidata via QLever (BULK, not per-title WDQS):
     re-running re-fetches (~15s) and full-replaces source='wikidata', so it's
     idempotent rather than incrementally resumable.
 
-Stage B -- Wikipedia plot (per title):
-    fetch + strip the Plot section for each title_wikidata_meta.wikipedia_url,
-    write title_plots.wikipedia_plot via crud.upsert_wikipedia_plot.
+Stage B -- Wikipedia plot (async, concurrent):
+    one TextExtracts call per title_wikidata_meta.wikipedia_url -> slice the Plot
+    section -> title_plots.wikipedia_plot via crud.upsert_wikipedia_plot. Fetch
+    coroutines run concurrently; the main coroutine does the writes.
     Resume: crud.titles_missing_wikipedia_plot drops a title once fetched.
 """
 
+import asyncio
 import sqlite3
+import time
 from cinesync.paths import DB_PATH
 from cinesync.config_loader import load_config
 from cinesync.ingestion import crud
 from cinesync.ingestion.wikidata import sparql, wikipedia
 from cinesync.ingestion.wikidata import parse as wd_parse
+from cinesync.utils.net import AsyncRateGate
 
 
 def run_wikidata_stage(conn):
@@ -59,27 +63,50 @@ def run_wikidata_stage(conn):
           f"{len(award_rows):,} award rows written.")
 
 
-def run_wikipedia_stage(conn):
-    """Stage B: Wikipedia plot text per resolved article URL."""
+async def run_wikipedia_stage(conn):
+    """Stage B: Wikipedia plot text per resolved article URL. Async -- fetch
+    coroutines run concurrently (Semaphore-capped, AsyncRateGate-paced); the MAIN
+    coroutine owns the single SQLite connection and writes as results arrive."""
     work = crud.titles_missing_wikipedia_plot(conn)
     if not work:
         print("Stage B (Wikipedia): nothing to do.")
         return
+    cfg = load_config()["rate_limiting"]["wikipedia"]
+    gate = AsyncRateGate(cfg["min_interval"])
+    sem = asyncio.Semaphore(cfg["concurrency"])
     session = wikipedia.new_session()
-    print(f"Stage B (Wikipedia): {len(work)} titles")
+    total = len(work)
+    print(f"Stage B (Wikipedia): {total} titles, concurrency={cfg['concurrency']}")
 
-    got = empty = errored = 0
-    for i, (title_id, wikipedia_url) in enumerate(work, 1):
-        res = wikipedia.fetch_plot(session, wikipedia_url)
-        crud.upsert_wikipedia_plot(conn, title_id, res["plot"], res["error"])
-        if res["error"] is not None:
-            errored += 1
-        elif res["plot"]:
-            got += 1
-        else:
-            empty += 1
-        if i % 25 == 0:
-            print(f"  ...{i}/{len(work)}  (plots={got}, no-section={empty}, errors={errored})")
+    async def fetch_one(title_id, wikipedia_url):
+        async with sem:
+            res = await wikipedia.fetch_plot(
+                session, wikipedia_url,
+                gate=gate, max_retries=cfg["max_retries"], timeout=cfg["timeout"],
+            )
+            return title_id, res
+
+    done = got = empty = errored = 0
+    start = time.monotonic()
+    tasks = [asyncio.create_task(fetch_one(t, u)) for t, u in work]
+    try:
+        for coro in asyncio.as_completed(tasks):
+            title_id, res = await coro
+            crud.upsert_wikipedia_plot(conn, title_id, res["plot"], res["error"])
+            done += 1
+            if res["error"] is not None:
+                errored += 1
+            elif res["plot"]:
+                got += 1
+            else:
+                empty += 1
+            if done % 200 == 0 or done == total:
+                rate = done / (time.monotonic() - start)
+                eta = (total - done) / rate / 60 if rate else float("inf")
+                print(f"  ...{done}/{total} (plots={got}, no-section={empty}, "
+                      f"errors={errored}) {rate:.1f} titles/s eta={eta:.0f}min")
+    finally:
+        await session.close()
 
     print(f"Stage B complete: {got} plots, {empty} no-section, {errored} errored.")
 
@@ -88,8 +115,8 @@ def main():
     load_config()  # fail fast on a missing/broken config before any network work
     conn = sqlite3.connect(DB_PATH)
     try:
-        run_wikidata_stage(conn)
-        run_wikipedia_stage(conn)
+        run_wikidata_stage(conn)              # Stage A: sync QLever bulk
+        asyncio.run(run_wikipedia_stage(conn))  # Stage B: async Wikipedia plots
     finally:
         conn.close()
 

@@ -65,7 +65,10 @@ rate_limiting:
     timeout: 180             # global spine/awards scans stream in ~5s; headroom for retries
     label_batch_size: 4000   # QIDs per label-resolution VALUES query
   wikipedia:
-    min_interval: 0.5    # anonymous api.php -- keep gentle
+    # Stage B is async (concurrency titles in flight); min_interval is a GLOBAL
+    # even-spacing floor (~20 req/s). Wikipedia throttles past ~20-30 req/s.
+    concurrency: 8
+    min_interval: 0.05
     max_retries: 4
     timeout: 30
   # IMDb + Letterboxd are both curl_cffi async scrapers (AsyncSession + semaphore),
