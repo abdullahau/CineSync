@@ -132,146 +132,6 @@ def known_tmdb_ids(conn, content_type: str) -> set:
 
 
 # ===========================================================================
-# Wikidata / Wikipedia enrichment
-# ===========================================================================
-#
-# Stage A (SPARQL) writes three tables from one pass:
-#   - title_awards          full-replace scoped to source='wikidata'
-#   - title_wikidata_meta   1:1; wikidata_fetched_at is the done-flag (a title
-#                           that won nothing has zero award rows, so absence of
-#                           awards can't mean "not fetched")
-#   - title_rt              opportunistic: only when Wikidata carries a P1258
-#                           RT slug. The rest are left for the separate
-#                           search-engine resolver.
-# Stage B (Wikipedia) fills title_plots.wikipedia_plot, mirroring the IMDb
-# enrichment error/fetched_at convention (error preserves existing text).
-
-
-def titles_missing_wikidata(conn):
-    """Stage-A work list + resume: titles with a wikidata_id whose Wikidata pass
-    has never landed OR last errored. A clean pass (wikidata_fetched_at set,
-    wikidata_error NULL) drops the title off, so re-running picks up only what's
-    left. Returns (title_id, wikidata_id)."""
-    return conn.execute(
-        """
-        SELECT t.title_id, t.wikidata_id
-        FROM titles t
-        LEFT JOIN title_wikidata_meta m ON m.title_id = t.title_id
-        WHERE t.wikidata_id IS NOT NULL AND t.wikidata_id != ''
-          AND (m.title_id IS NULL OR m.wikidata_fetched_at IS NULL
-               OR m.wikidata_error IS NOT NULL)
-        """
-    ).fetchall()
-
-
-def upsert_wikidata_result(conn, title_id, result):
-    """Write one title's Stage-A result across title_awards, title_wikidata_meta,
-    and (opportunistically) title_rt, in one transaction.
-
-    `result` is either {'error': str} (fetch failure -- only the meta error/
-    fetched_at are stamped; awards/rt untouched) or a success dict
-    {'awards': [award...], 'wikipedia_url': str|None, 'rt_slug': str|None}.
-    Awards are full-replaced for source='wikidata' so a re-fetch is idempotent."""
-    err = result.get("error")
-    if err is not None:
-        conn.execute(
-            """INSERT INTO title_wikidata_meta
-                 (title_id, wikidata_fetched_at, wikidata_error)
-               VALUES (?, datetime('now'), ?)
-               ON CONFLICT(title_id) DO UPDATE SET
-                 wikidata_fetched_at=excluded.wikidata_fetched_at,
-                 wikidata_error=excluded.wikidata_error""",
-            (title_id, err),
-        )
-        conn.commit()
-        return
-
-    conn.execute(
-        "DELETE FROM title_awards WHERE title_id=? AND source='wikidata'", (title_id,)
-    )
-    conn.executemany(
-        """INSERT OR IGNORE INTO title_awards
-             (title_id, statement_id, award_name, result, prestige, level, subject, year, source)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'wikidata')""",
-        [
-            (title_id, a["statement_id"], a["award_name"], a["result"],
-             a["prestige"], a["level"], a["subject"], a["year"])
-            for a in result.get("awards", [])
-        ],
-    )
-
-    conn.execute(
-        """INSERT INTO title_wikidata_meta
-             (title_id, wikipedia_url, wikidata_fetched_at, wikidata_error)
-           VALUES (?, ?, datetime('now'), NULL)
-           ON CONFLICT(title_id) DO UPDATE SET
-             wikipedia_url=excluded.wikipedia_url,
-             wikidata_fetched_at=excluded.wikidata_fetched_at,
-             wikidata_error=NULL""",
-        (title_id, result.get("wikipedia_url")),
-    )
-
-    rt_slug = result.get("rt_slug")
-    if rt_slug:
-        conn.execute(
-            """INSERT INTO title_rt (title_id, rt_slug, source, resolved_at, last_error)
-               VALUES (?, ?, 'wikidata', datetime('now'), NULL)
-               ON CONFLICT(title_id) DO UPDATE SET
-                 rt_slug=excluded.rt_slug, source=excluded.source,
-                 resolved_at=excluded.resolved_at, last_error=NULL""",
-            (title_id, rt_slug),
-        )
-
-    conn.commit()
-
-
-def titles_missing_wikipedia_plot(conn):
-    """Stage-B work list + resume: titles with a Wikipedia URL (from Stage A)
-    whose plot fetch has never run OR last errored. A clean fetch -- whether it
-    found a plot or terminally found no plot section (error NULL either way) --
-    drops the title off. Returns (title_id, wikipedia_url)."""
-    return conn.execute(
-        """
-        SELECT t.title_id, m.wikipedia_url
-        FROM titles t
-        JOIN title_wikidata_meta m ON m.title_id = t.title_id
-        LEFT JOIN title_plots p ON p.title_id = t.title_id
-        WHERE m.wikipedia_url IS NOT NULL AND m.wikipedia_url != ''
-          AND (p.title_id IS NULL OR p.wikipedia_fetched_at IS NULL
-               OR p.wikipedia_error IS NOT NULL)
-        """
-    ).fetchall()
-
-
-def upsert_wikipedia_plot(conn, title_id, plot, error):
-    """Write one title's Wikipedia plot into title_plots. On error, only
-    wikipedia_error/fetched_at are stamped and existing text is preserved. On
-    success (error is None -- plot may still be None for a plotless article),
-    wikipedia_plot is written and the error cleared."""
-    if error is not None:
-        conn.execute(
-            """INSERT INTO title_plots (title_id, wikipedia_error, wikipedia_fetched_at)
-               VALUES (?, ?, datetime('now'))
-               ON CONFLICT(title_id) DO UPDATE SET
-                 wikipedia_error=excluded.wikipedia_error,
-                 wikipedia_fetched_at=excluded.wikipedia_fetched_at""",
-            (title_id, error),
-        )
-    else:
-        conn.execute(
-            """INSERT INTO title_plots
-                 (title_id, wikipedia_plot, wikipedia_error, wikipedia_fetched_at)
-               VALUES (?, ?, NULL, datetime('now'))
-               ON CONFLICT(title_id) DO UPDATE SET
-                 wikipedia_plot=excluded.wikipedia_plot,
-                 wikipedia_error=NULL,
-                 wikipedia_fetched_at=excluded.wikipedia_fetched_at""",
-            (title_id, plot),
-        )
-    conn.commit()
-
-
-# ===========================================================================
 # TMDB /recommendations links
 # ===========================================================================
 
@@ -511,8 +371,16 @@ def upsert_imdb_rating_dist(conn, title_id, rec):
              total_votes=excluded.total_votes, fetched_at=datetime('now')""",
         (
             title_id,
-            v[1], v[2], v[3], v[4], v[5],
-            v[6], v[7], v[8], v[9], v[10],
+            v[1],
+            v[2],
+            v[3],
+            v[4],
+            v[5],
+            v[6],
+            v[7],
+            v[8],
+            v[9],
+            v[10],
             rec["total_votes"],
         ),
     )
@@ -541,3 +409,118 @@ def titles_missing_imdb_data(conn):
           )
         """
     ).fetchall()
+
+
+# ===========================================================================
+# Wikidata / Wikipedia enrichment
+# ===========================================================================
+#
+# Stage A is a BULK refresh from QLever (not per-title WDQS): two global scans
+# keyed on imdb_id, filtered to our titles, written in one transaction:
+#   - title_awards          full-replace of source='wikidata' (idempotent re-run)
+#   - title_wikidata_meta   1:1; wikidata_fetched_at stamped for EVERY attempted
+#                           title -- it's the done-flag (a title that won nothing
+#                           has zero award rows, so absence can't mean "unfetched")
+#   - title_rt              only for titles whose Wikidata item carries a P1258
+#                           RT slug; the rest are left for the search-engine resolver.
+# Stage B (Wikipedia) fills title_plots.wikipedia_plot, mirroring the IMDb
+# enrichment error/fetched_at convention (error preserves existing text).
+
+
+def wikidata_target_titles(conn):
+    """The universe Stage A can enrich: every title with an imdb_id (the QLever
+    join key) or a wikidata_id. Returns (title_id, imdb_id, wikidata_id). The
+    driver builds the imdb_id->title_id map from this and stamps every returned
+    title's wikidata_fetched_at, so titles with no awards still register as done."""
+    return conn.execute(
+        """
+        SELECT title_id, imdb_id, wikidata_id
+        FROM titles
+        WHERE (imdb_id IS NOT NULL AND imdb_id != '')
+           OR (wikidata_id IS NOT NULL AND wikidata_id != '')
+        """
+    ).fetchall()
+
+
+def replace_wikidata_data(conn, meta_rows, rt_rows, award_rows):
+    """Bulk-write one full Stage-A refresh in a single transaction.
+
+    - meta_rows:  [(title_id, wikipedia_url|None)] for EVERY attempted title
+      (stamps wikidata_fetched_at = the done-flag; wikipedia_url may be None).
+    - rt_rows:    [(title_id, rt_slug)] only for titles with a P1258 slug.
+    - award_rows: [(title_id, statement_id, award_name, result, prestige,
+      level, subject, year)] -- title_awards is full-replaced for
+      source='wikidata' first, so the refresh is idempotent.
+    """
+    conn.executemany(
+        """INSERT INTO title_wikidata_meta
+             (title_id, wikipedia_url, wikidata_fetched_at, wikidata_error)
+           VALUES (?, ?, datetime('now'), NULL)
+           ON CONFLICT(title_id) DO UPDATE SET
+             wikipedia_url=excluded.wikipedia_url,
+             wikidata_fetched_at=excluded.wikidata_fetched_at,
+             wikidata_error=NULL""",
+        meta_rows,
+    )
+    conn.executemany(
+        """INSERT INTO title_rt (title_id, rt_slug, source, resolved_at, last_error)
+           VALUES (?, ?, 'wikidata', datetime('now'), NULL)
+           ON CONFLICT(title_id) DO UPDATE SET
+             rt_slug=excluded.rt_slug, source=excluded.source,
+             resolved_at=excluded.resolved_at, last_error=NULL""",
+        rt_rows,
+    )
+    conn.execute("DELETE FROM title_awards WHERE source='wikidata'")
+    conn.executemany(
+        """INSERT OR IGNORE INTO title_awards
+             (title_id, statement_id, award_name, result, prestige, level, subject, year, source)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'wikidata')""",
+        award_rows,
+    )
+    conn.commit()
+
+
+def titles_missing_wikipedia_plot(conn):
+    """Stage-B work list + resume: titles with a Wikipedia URL (from Stage A)
+    whose plot fetch has never run OR last errored. A clean fetch -- whether it
+    found a plot or terminally found no plot section (error NULL either way) --
+    drops the title off. Returns (title_id, wikipedia_url)."""
+    return conn.execute(
+        """
+        SELECT t.title_id, m.wikipedia_url
+        FROM titles t
+        JOIN title_wikidata_meta m ON m.title_id = t.title_id
+        LEFT JOIN title_plots p ON p.title_id = t.title_id
+        WHERE m.wikipedia_url IS NOT NULL AND m.wikipedia_url != ''
+          AND (p.title_id IS NULL OR p.wikipedia_fetched_at IS NULL
+               OR p.wikipedia_error IS NOT NULL)
+        """
+    ).fetchall()
+
+
+def upsert_wikipedia_plot(conn, title_id, plot, error):
+    """Write one title's Wikipedia plot into title_plots. On error, only
+    wikipedia_error/fetched_at are stamped and existing text is preserved. On
+    success (error is None -- plot may still be None for a plotless article),
+    wikipedia_plot is written and the error cleared."""
+    if error is not None:
+        conn.execute(
+            """INSERT INTO title_plots (title_id, wikipedia_error, wikipedia_fetched_at)
+               VALUES (?, ?, datetime('now'))
+               ON CONFLICT(title_id) DO UPDATE SET
+                 wikipedia_error=excluded.wikipedia_error,
+                 wikipedia_fetched_at=excluded.wikipedia_fetched_at""",
+            (title_id, error),
+        )
+    else:
+        conn.execute(
+            """INSERT INTO title_plots
+                 (title_id, wikipedia_plot, wikipedia_error, wikipedia_fetched_at)
+               VALUES (?, ?, NULL, datetime('now'))
+               ON CONFLICT(title_id) DO UPDATE SET
+                 wikipedia_plot=excluded.wikipedia_plot,
+                 wikipedia_error=NULL,
+                 wikipedia_fetched_at=excluded.wikipedia_fetched_at""",
+            (title_id, plot),
+        )
+    conn.commit()

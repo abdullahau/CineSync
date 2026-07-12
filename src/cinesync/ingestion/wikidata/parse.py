@@ -1,16 +1,14 @@
 """
-Parse Wikidata SPARQL JSON bindings into per-title records. No 'error' key --
-the driver carries fetch errors from the sparql layer. Results are keyed by
-bare Q-id so the driver can map each back to a title_id via titles.wikidata_id.
+Assemble QLever bulk rows into DB records. The fetch layer (sparql.py) returns
+cleaned dict rows keyed on imdb_id; here we filter to our titles, join the
+separately-resolved labels, and tag prestige. Pure functions -- no network, no
+DB -- so they're unit-testable against fixtures.
 """
-
-_ENTITY_PREFIX = "http://www.wikidata.org/entity/"
-_STATEMENT_PREFIX = "http://www.wikidata.org/entity/statement/"
 
 # Prestige family by award-label prefix/substring. Label-matching (not family
 # QIDs) is deliberate: the families are named very consistently on Wikidata, and
-# an unmatched label fails VISIBLY (shows up as prestige=None) rather than
-# silently returning zero the way a wrong QID would. Adding a family is one line.
+# an unmatched label fails VISIBLY (prestige=None) rather than silently. Adding a
+# family is one line.
 _PRESTIGE_PREFIX = (
     ("Academy Award", "Oscars"),
     ("Primetime Emmy", "Primetime Emmy"),
@@ -38,63 +36,50 @@ def tag_prestige(award_label):
     return None
 
 
-def _val(row, key):
-    cell = row.get(key)
-    return cell.get("value") if cell else None
-
-
-def _qid(uri):
-    return uri.rsplit("/", 1)[-1] if uri else None
-
-
-def parse_awards(bindings):
-    """Award-statement rows -> {qid: [award dict, ...]}. Each award dict:
-    statement_id, award_name, result, prestige, level, subject, year. `subject`
-    is the person's name for level='person', None for level='title'. A title
-    that won nothing simply won't appear as a key."""
-    out = {}
-    for row in bindings:
-        qid = _qid(_val(row, "item"))
-        if qid is None:
+def assemble_spine(spine_rows, imdb_to_title):
+    """Filter the global spine to our titles. Returns
+    (url_by_title: {title_id: wikipedia_url}, rt_rows: [(title_id, rt_slug)]).
+    First non-null value wins if an imdb_id maps to multiple Wikidata items."""
+    url_by_title = {}
+    rt_by_title = {}
+    for row in spine_rows:
+        title_id = imdb_to_title.get(row["imdb_id"])
+        if title_id is None:
             continue
-        level = _val(row, "level")
-        year = _val(row, "year")
-        award_name = _val(row, "awardLabel")
-        out.setdefault(qid, []).append(
-            {
-                "statement_id": _statement_id(_val(row, "st")),
-                "award_name": award_name,
-                "result": _val(row, "result"),
-                "prestige": tag_prestige(award_name),
-                "level": level,
-                "subject": _val(row, "subjectLabel") if level == "person" else None,
-                "year": int(year) if year else None,
-            }
-        )
-    return out
+        if row.get("wikipedia_url") and title_id not in url_by_title:
+            url_by_title[title_id] = row["wikipedia_url"]
+        if row.get("rt_slug") and title_id not in rt_by_title:
+            rt_by_title[title_id] = row["rt_slug"]
+    rt_rows = list(rt_by_title.items())
+    return url_by_title, rt_rows
 
 
-def _statement_id(uri):
-    if not uri:
-        return None
-    if uri.startswith(_STATEMENT_PREFIX):
-        return uri[len(_STATEMENT_PREFIX):]
-    return uri
-
-
-def parse_links(bindings):
-    """Wikipedia-URL + RT-slug rows -> {qid: {'wikipedia_url', 'rt_slug'}}.
-    Both OPTIONAL, so either may be None. One row per item (both fields are
-    single-valued for a film/series), but we defensively keep the first
-    non-null seen for each field in case of duplicate rows."""
-    out = {}
-    for row in bindings:
-        qid = _qid(_val(row, "item"))
-        if qid is None:
+def assemble_awards(stmt_rows, award_labels, person_labels, imdb_to_title):
+    """Filter award statements to our titles, join labels, tag prestige. Returns
+    title_awards tuples (title_id, statement_id, award_name, result, prestige,
+    level, subject, year), deduped by (title_id, statement_id). `award_name`
+    falls back to the award QID when Wikidata has no English label (the column is
+    NOT NULL); `subject` is the person's name for level='person', else None."""
+    seen = set()
+    rows = []
+    for s in stmt_rows:
+        title_id = imdb_to_title.get(s["imdb_id"])
+        if title_id is None:
             continue
-        rec = out.setdefault(qid, {"wikipedia_url": None, "rt_slug": None})
-        if rec["wikipedia_url"] is None:
-            rec["wikipedia_url"] = _val(row, "wikipediaArticle")
-        if rec["rt_slug"] is None:
-            rec["rt_slug"] = _val(row, "rtId")
-    return out
+        key = (title_id, s["statement_id"])
+        if key in seen:
+            continue
+        seen.add(key)
+        award_name = award_labels.get(s["award_qid"]) or s["award_qid"]
+        subject = person_labels.get(s["person_qid"]) if s["level"] == "person" else None
+        rows.append((
+            title_id,
+            s["statement_id"],
+            award_name,
+            s["result"],
+            tag_prestige(award_name),
+            s["level"],
+            subject,
+            s["year"],
+        ))
+    return rows

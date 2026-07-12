@@ -1,21 +1,19 @@
 """
-Wikidata / Wikipedia enrichment driver -- two stages, single-threaded on the
-main thread (WDQS and Wikipedia both dislike concurrency, and the DB is
-single-writer).
+Wikidata / Wikipedia enrichment driver -- two stages, single-threaded.
 
 Run:  uv run --env-file .env python pipelines/wikidata_ingest.py
 
-Stage A -- Wikidata SPARQL (batched over Q-ids):
-    per batch, fetch award statements + (Wikipedia URL, RT slug), then write
-    title_awards / title_wikidata_meta / title_rt via crud.upsert_wikidata_result.
-    Resume: crud.titles_missing_wikidata drops a title once its pass lands clean.
+Stage A -- Wikidata via QLever (BULK, not per-title WDQS):
+    two global scans keyed on imdb_id -- the spine (Wikipedia URL + RT slug) and
+    all award statements -- filtered to our titles, labels resolved separately,
+    written in one transaction (crud.replace_wikidata_data). It's a full refresh:
+    re-running re-fetches (~15s) and full-replaces source='wikidata', so it's
+    idempotent rather than incrementally resumable.
 
 Stage B -- Wikipedia plot (per title):
     fetch + strip the Plot section for each title_wikidata_meta.wikipedia_url,
     write title_plots.wikipedia_plot via crud.upsert_wikipedia_plot.
     Resume: crud.titles_missing_wikipedia_plot drops a title once fetched.
-
-Both stages are re-runnable; a crash mid-run just resumes where it left off.
 """
 
 import sqlite3
@@ -26,54 +24,39 @@ from cinesync.ingestion.wikidata import sparql, wikipedia
 from cinesync.ingestion.wikidata import parse as wd_parse
 
 
-def _chunks(seq, n):
-    for i in range(0, len(seq), n):
-        yield seq[i : i + n]
-
-
 def run_wikidata_stage(conn):
-    """Stage A: Wikidata SPARQL -> awards + meta + opportunistic RT slug."""
-    work = crud.titles_missing_wikidata(conn)
-    if not work:
-        print("Stage A (Wikidata): nothing to do.")
+    """Stage A: QLever bulk export -> awards + meta + opportunistic RT slug."""
+    targets = crud.wikidata_target_titles(conn)  # (title_id, imdb_id, wikidata_id)
+    imdb_to_title = {imdb: tid for tid, imdb, _wd in targets if imdb}
+    if not imdb_to_title:
+        print("Stage A (Wikidata): no titles with an imdb_id -- nothing to do.")
         return
-    batch_size = sparql._cfg()["batch_size"]
     session = sparql.new_session()
-    print(f"Stage A (Wikidata): {len(work)} titles, batch_size={batch_size}")
+    print(f"Stage A (Wikidata/QLever): {len(imdb_to_title)} titles with imdb_id.")
 
-    done = errored = 0
-    for batch in _chunks(work, batch_size):
-        by_qid = {wikidata_id: title_id for title_id, wikidata_id in batch}
-        qids = list(by_qid)
+    # 1. spine: Wikipedia URL + RT slug, filtered to our titles.
+    spine = sparql.fetch_spine(session)
+    url_by_title, rt_rows = wd_parse.assemble_spine(spine, imdb_to_title)
+    print(f"  spine: {len(spine):,} rows -> {len(url_by_title)} enwiki, {len(rt_rows)} RT slugs")
 
-        aw = sparql.fetch_awards(session, qids)
-        ln = sparql.fetch_links(session, qids)
+    # 2. award statements (global scan), filtered to our titles.
+    stmts = sparql.fetch_award_statements(session)
+    ours = [s for s in stmts if s["imdb_id"] in imdb_to_title]
+    print(f"  awards: {len(stmts):,} statements -> {len(ours):,} for our titles")
 
-        if "error" in aw or "error" in ln:
-            msg = f"awards: {aw.get('error')}; links: {ln.get('error')}"
-            for title_id in by_qid.values():
-                crud.upsert_wikidata_result(conn, title_id, {"error": msg})
-            errored += len(by_qid)
-            print(f"  batch of {len(qids)} errored -> {msg[:120]}")
-            continue
+    # 3. resolve just the labels that actually appear (cheap, batched).
+    award_labels = sparql.fetch_labels(session, {s["award_qid"] for s in ours})
+    person_labels = sparql.fetch_labels(
+        session, {s["person_qid"] for s in ours if s["level"] == "person"})
+    award_rows = wd_parse.assemble_awards(ours, award_labels, person_labels, imdb_to_title)
 
-        awards = wd_parse.parse_awards(aw["bindings"])
-        links = wd_parse.parse_links(ln["bindings"])
-        for qid, title_id in by_qid.items():
-            link = links.get(qid, {})
-            crud.upsert_wikidata_result(
-                conn,
-                title_id,
-                {
-                    "awards": awards.get(qid, []),
-                    "wikipedia_url": link.get("wikipedia_url"),
-                    "rt_slug": link.get("rt_slug"),
-                },
-            )
-            done += 1
-        print(f"  ...{done} done, {errored} errored")
+    # 4. stamp wikidata_fetched_at for EVERY attempted title (done-flag), even
+    #    those with no spine row and no awards.
+    meta_rows = [(tid, url_by_title.get(tid)) for tid in imdb_to_title.values()]
 
-    print(f"Stage A complete: {done} written, {errored} errored (retryable next run).")
+    crud.replace_wikidata_data(conn, meta_rows, rt_rows, award_rows)
+    print(f"Stage A complete: {len(meta_rows)} meta, {len(rt_rows)} RT, "
+          f"{len(award_rows):,} award rows written.")
 
 
 def run_wikipedia_stage(conn):

@@ -58,10 +58,12 @@ rate_limiting:
     max_retries: 5
     timeout: [10, 30]    # (connect, read) seconds
   wikidata:
-    min_interval: 1.0    # WDQS: single-threaded, ~1 req/s
+    # QLever bulk export (WDQS timed out at 70k scale). Endpoint lives in code;
+    # these are HTTP pacing/retry + the label-resolution chunk size.
+    min_interval: 0.5
     max_retries: 4
-    timeout: 60          # matches WDQS's server-side query timeout
-    batch_size: 40       # Q-ids per SPARQL query; keeps award fan-out under the 60s timeout
+    timeout: 180             # global spine/awards scans stream in ~5s; headroom for retries
+    label_batch_size: 4000   # QIDs per label-resolution VALUES query
   wikipedia:
     min_interval: 0.5    # anonymous api.php -- keep gentle
     max_retries: 4
