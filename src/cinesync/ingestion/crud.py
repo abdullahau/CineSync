@@ -119,8 +119,35 @@ def upsert_tmdb_title(conn: sqlite3.Connection, parsed: dict) -> bool:
             (title_id, es["source"], es["score"], es["sample_size"]),
         )
 
+    # A successful ingest clears any prior fetch-failure row for this id.
+    conn.execute(
+        "DELETE FROM tmdb_ingest_errors WHERE tmdb_id=? AND content_type=?",
+        (t["tmdb_id"], t["content_type"]),
+    )
+
     conn.commit()
     return is_new
+
+
+def mark_tmdb_ingest_error(
+    conn: sqlite3.Connection,
+    tmdb_id: int,
+    content_type: str,
+    source: str,
+    error: str,
+) -> None:
+    """Record a TMDB per-title details fetch/parse failure. Keyed by
+    (tmdb_id, content_type) because the failure precedes any titles row.
+    Overwrites the prior row for this id (last failure wins); a later
+    successful upsert_tmdb_title deletes it."""
+    conn.execute(
+        """INSERT INTO tmdb_ingest_errors (tmdb_id, content_type, source, error, fetched_at)
+           VALUES (?, ?, ?, ?, datetime('now'))
+           ON CONFLICT(tmdb_id, content_type) DO UPDATE SET
+             source=excluded.source, error=excluded.error, fetched_at=excluded.fetched_at""",
+        (tmdb_id, content_type, source, error),
+    )
+    conn.commit()
 
 
 def known_tmdb_ids(conn, content_type: str) -> set:
@@ -206,9 +233,13 @@ def _letterboxd_stats_row(film: dict) -> tuple:
 
 def titles_missing_letterboxd_stats(conn: sqlite3.Connection) -> list:
     """
-    The Letterboxd scrape work list: titles with no title_letterboxd_stats
-    row yet. The anti-join is the resume mechanism -- a title drops off the
-    list as soon as its row lands, so re-running picks up only what's left.
+    The Letterboxd scrape work list + resume mechanism: titles whose stats
+    have never landed OR last errored. A successful row (letterboxd_error
+    NULL) drops off the list, so re-running picks up only what's left. The
+    stats row is Letterboxd-exclusive, so "row exists with error NULL" == a
+    clean success; keying on the error column (not fetched_at) means existing
+    pre-migration rows -- written only on success -- stay done without a
+    fabricated timestamp backfill.
 
     Returns (title_id, imdb_id, tmdb_id, content_type) per row. imdb_id may
     be NULL: the scraper falls back to the tmdb slug for movies, while TV
@@ -218,9 +249,8 @@ def titles_missing_letterboxd_stats(conn: sqlite3.Connection) -> list:
         """
         SELECT t.title_id, t.imdb_id, t.tmdb_id, t.content_type
         FROM titles t
-        WHERE NOT EXISTS (
-            SELECT 1 FROM title_letterboxd_stats s WHERE s.title_id = t.title_id
-        )
+        LEFT JOIN title_letterboxd_stats s ON s.title_id = t.title_id
+        WHERE s.title_id IS NULL OR s.letterboxd_error IS NOT NULL
         """
     ).fetchall()
 
@@ -229,7 +259,8 @@ def upsert_letterboxd_stats(conn: sqlite3.Connection, film: dict) -> None:
     """
     Write one scraped title's Letterboxd stats (rating value/count, the
     half-star histogram, and watches/lists/likes/top_rank). INSERT OR REPLACE
-    keeps a single current row per title_id.
+    keeps a single current row per title_id; letterboxd_fetched_at is stamped
+    and letterboxd_error cleared, so a success supersedes any prior error row.
     """
     conn.execute(
         """INSERT OR REPLACE INTO title_letterboxd_stats (
@@ -239,14 +270,34 @@ def upsert_letterboxd_stats(conn: sqlite3.Connection, film: dict) -> None:
             rating_2_5_count, rating_3_0_count, rating_3_5_count, rating_4_0_count,
             rating_4_5_count, rating_5_0_count,
 
-            watches, lists, likes, top_rank
+            watches, lists, likes, top_rank,
+            letterboxd_fetched_at, letterboxd_error
         )
         VALUES (
             ?, ?, ?, ?,
             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-            ?, ?, ?, ?
+            ?, ?, ?, ?,
+            datetime('now'), NULL
         )""",
         _letterboxd_stats_row(film),
+    )
+    conn.commit()
+
+
+def mark_letterboxd_error(conn: sqlite3.Connection, title_id: str, error: str) -> None:
+    """
+    Record a failed Letterboxd scrape: stamp letterboxd_fetched_at + the error
+    without disturbing any stats already present (mirrors the IMDb/Wikipedia
+    error convention). Keeps the title on the resume work list (error non-NULL)
+    while making "tried and failed" distinguishable from "never tried".
+    """
+    conn.execute(
+        """INSERT INTO title_letterboxd_stats (title_id, letterboxd_fetched_at, letterboxd_error)
+           VALUES (?, datetime('now'), ?)
+           ON CONFLICT(title_id) DO UPDATE SET
+             letterboxd_fetched_at=excluded.letterboxd_fetched_at,
+             letterboxd_error=excluded.letterboxd_error""",
+        (title_id, error),
     )
     conn.commit()
 
@@ -334,16 +385,18 @@ def upsert_imdb_enrichment(conn, title_id, rec, genre_map=None):
 
 def titles_missing_imdb_rating_dist(conn):
     """IMDb ratings-histogram work list + resume mechanism: titles with a usable
-    imdb_id and no title_imdb_rating_dist row yet. A row landing drops the title
-    off the list. (No error column here, so a title that returns no ratings
-    stays on the list and is re-probed next run -- accepted, most titles rate.)"""
+    imdb_id that have no clean histogram row -- i.e. no row at all, OR a row whose
+    last fetch errored (histogram_error set). A votes row with histogram_error
+    NULL drops the title off. (A title that legitimately returns no ratings still
+    leaves no row and is re-probed next run -- accepted, most titles rate.)"""
     return conn.execute(
         """
         SELECT t.title_id, t.imdb_id
         FROM titles t
         WHERE t.imdb_id IS NOT NULL AND t.imdb_id != ''
           AND NOT EXISTS (
-              SELECT 1 FROM title_imdb_rating_dist d WHERE d.title_id = t.title_id
+              SELECT 1 FROM title_imdb_rating_dist d
+              WHERE d.title_id = t.title_id AND d.histogram_error IS NULL
           )
         """
     ).fetchall()
@@ -353,22 +406,25 @@ def upsert_imdb_rating_dist(conn, title_id, rec):
     """Write one title's worldwide IMDb rating distribution into
     title_imdb_rating_dist (votes_1..votes_10 + total_votes). Overwrite-on-
     refresh via ON CONFLICT. Returns False (writes nothing) when there's no
-    distribution -- total_votes falsy -- so a ratingless title leaves no row."""
+    distribution -- total_votes falsy -- so a ratingless title leaves no row.
+    A success clears any prior histogram_error."""
     if not rec.get("total_votes"):
         return False
     v = rec["votes"]
     conn.execute(
         """INSERT INTO title_imdb_rating_dist
              (title_id, votes_1, votes_2, votes_3, votes_4, votes_5,
-              votes_6, votes_7, votes_8, votes_9, votes_10, total_votes, fetched_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+              votes_6, votes_7, votes_8, votes_9, votes_10, total_votes,
+              histogram_error, fetched_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, datetime('now'))
            ON CONFLICT(title_id) DO UPDATE SET
              votes_1=excluded.votes_1, votes_2=excluded.votes_2,
              votes_3=excluded.votes_3, votes_4=excluded.votes_4,
              votes_5=excluded.votes_5, votes_6=excluded.votes_6,
              votes_7=excluded.votes_7, votes_8=excluded.votes_8,
              votes_9=excluded.votes_9, votes_10=excluded.votes_10,
-             total_votes=excluded.total_votes, fetched_at=datetime('now')""",
+             total_votes=excluded.total_votes, histogram_error=NULL,
+             fetched_at=datetime('now')""",
         (
             title_id,
             v[1],
@@ -388,13 +444,30 @@ def upsert_imdb_rating_dist(conn, title_id, rec):
     return True
 
 
+def mark_imdb_histogram_error(conn, title_id, error):
+    """Record a failed IMDb ratings-histogram sub-fetch in title_imdb_rating_dist,
+    stamping histogram_error + fetched_at without disturbing any votes already
+    present (ON CONFLICT preserves them). Distinct from title_plots.imdb_error,
+    which owns storyline-enrichment failures. Keeps the title on the histogram
+    resume list (histogram_error non-NULL)."""
+    conn.execute(
+        """INSERT INTO title_imdb_rating_dist (title_id, histogram_error, fetched_at)
+           VALUES (?, ?, datetime('now'))
+           ON CONFLICT(title_id) DO UPDATE SET
+             histogram_error=excluded.histogram_error, fetched_at=excluded.fetched_at""",
+        (title_id, error),
+    )
+    conn.commit()
+
+
 def titles_missing_imdb_data(conn):
     """Union work list for the batched IMDb fetch: titles with a usable imdb_id
     that still need EITHER storyline enrichment (title_plots missing / never
     fetched / last errored) OR a ratings-distribution row. One batched request
     covers both, so a title appears once if it needs either and drops off only
     once both sides have landed. It's the OR-union of titles_missing_imdb_
-    enrichment and titles_missing_imdb_rating_dist."""
+    enrichment and titles_missing_imdb_rating_dist (histogram side retries on
+    histogram_error, mirroring the storyline imdb_error retry)."""
     return conn.execute(
         """
         SELECT t.title_id, t.imdb_id
@@ -404,7 +477,8 @@ def titles_missing_imdb_data(conn):
           AND (
               p.title_id IS NULL OR p.imdb_fetched_at IS NULL OR p.imdb_error IS NOT NULL
               OR NOT EXISTS (
-                  SELECT 1 FROM title_imdb_rating_dist d WHERE d.title_id = t.title_id
+                  SELECT 1 FROM title_imdb_rating_dist d
+                  WHERE d.title_id = t.title_id AND d.histogram_error IS NULL
               )
           )
         """

@@ -1,10 +1,8 @@
 import sqlite3
 import asyncio
-import json
 import time
-from datetime import datetime, timezone
 
-from cinesync.paths import DB_PATH, LOGS_DIR
+from cinesync.paths import DB_PATH
 from cinesync.config_loader import load_config
 from cinesync.ingestion.imdb import graphql, parse, bulk
 from cinesync.ingestion import crud
@@ -25,28 +23,6 @@ MAX_RETRIES = _rl["max_retries"]
 TIMEOUT = _rl["timeout"]
 STORYLINE_SHA256 = _cfg["apis"]["imdb"]["storyline_sha256"]
 PROGRESS_EVERY = 100
-
-FAILURE_LOG_PATH = LOGS_DIR / "imdb_enrichment_failures.jsonl"
-
-
-def log_failure(
-    title_id: str,
-    imdb_id: str,
-    stage: str,
-    error_msg: str,
-) -> None:
-    """Append one failed sub-fetch to the JSONL side log. `stage` is
-    'storyline' | 'histogram' | an exception class name (malformed response);
-    same one-line-per-failure shape as letterboxd_ingest's log_failure."""
-    entry = {
-        "title_id": title_id,
-        "imdb_id": imdb_id,
-        "stage": stage,
-        "error_message": error_msg[:300],
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
-    with open(FAILURE_LOG_PATH, "a", encoding="utf-8") as f:
-        f.write(json.dumps(entry) + "\n")
 
 
 # ============================ bulk datasets =============================
@@ -109,29 +85,33 @@ async def enrich():
                 srec = (
                     {"error": s["error"]} if "error" in s else parse.parse(s["title"])
                 )
+                # storyline errors are recorded in title_plots.imdb_error by
+                # upsert_imdb_enrichment's own error path.
                 crud.upsert_imdb_enrichment(conn, title_id, srec, genre_map=GENRE_MAP)
                 if "error" in srec:
                     story_err += 1
-                    log_failure(title_id, imdb_id, "storyline", srec["error"])
                 else:
                     story_ok += 1
 
-                # histogram -> title_imdb_rating_dist (skips titles with no ratings)
+                # histogram -> title_imdb_rating_dist (skips titles with no
+                # ratings); failures land in title_imdb_rating_dist.histogram_error.
                 h = batch["histogram"]
                 if "error" in h:
                     hist_err += 1
-                    log_failure(title_id, imdb_id, "histogram", h["error"])
+                    crud.mark_imdb_histogram_error(conn, title_id, h["error"][:300])
                 else:
                     crud.upsert_imdb_rating_dist(
                         conn, title_id, parse.parse_ratings_histogram(h["title"])
                     )
                     hist_ok += 1
             except Exception as exc:
-                # one malformed response must not sink a multi-hour run; the
-                # title simply stays on the resume list for the next pass.
+                # one malformed response must not sink a multi-hour run; record it
+                # to imdb_error so it stays on the resume list for the next pass.
                 story_err += 1
                 hist_err += 1
-                log_failure(title_id, imdb_id, type(exc).__name__, str(exc))
+                crud.upsert_imdb_enrichment(
+                    conn, title_id, {"error": f"{type(exc).__name__}: {exc}"[:300]}
+                )
                 print(f"  ! {imdb_id}: {type(exc).__name__}: {exc}")
                 continue
 
@@ -153,7 +133,10 @@ async def enrich():
         f"hist ok={hist_ok} err={hist_err} out of {total}."
     )
     if story_err or hist_err:
-        print(f"Failure details: {FAILURE_LOG_PATH}")
+        print(
+            "Failures recorded in SQLite: title_plots.imdb_error (storyline), "
+            "title_imdb_rating_dist.histogram_error (histogram)."
+        )
 
 
 if __name__ == "__main__":

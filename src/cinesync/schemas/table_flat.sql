@@ -114,9 +114,9 @@ SELECT
     s.imdb_rating,
     s.imdb_rating_count,
     id.imdb_dist_total_votes,
-    id.imdb_hist_implied_rating
+    id.imdb_hist_implied_rating,
     s.rt_critic,
-    s.rt_audience,    
+    s.rt_audience
 FROM titles t
 LEFT JOIN genres_agg     g  ON g.title_id  = t.title_id
 LEFT JOIN keywords_agg   k  ON k.title_id  = t.title_id

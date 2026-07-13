@@ -3,10 +3,9 @@ import asyncio
 import re
 import json
 import time
-from datetime import datetime, timezone
 import curl_cffi.requests as requests
 from parsel import Selector
-from cinesync.paths import DB_PATH, LOGS_DIR
+from cinesync.paths import DB_PATH
 from cinesync.config_loader import load_config
 from cinesync.ingestion import crud
 from cinesync.utils.net import AsyncRateGate, paced_request_async
@@ -19,8 +18,6 @@ MAX_RETRIES = _rl["max_retries"]      # per-request 429/5xx + connection retries
 TIMEOUT = _rl["timeout"]
 PROGRESS_EVERY = 100  # print a progress/ETA line every N completions
 
-FAILURE_LOG_PATH = LOGS_DIR / "letterboxd_scrape_failures.jsonl"
-
 BASE_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -31,25 +28,6 @@ BASE_HEADERS = {
 session = requests.AsyncSession(impersonate="chrome124")
 # Global rate gate shared across all coroutines; every outbound request awaits it.
 gate = AsyncRateGate(MIN_INTERVAL)
-
-
-def log_failure(
-    title_id: str,
-    imdb_id: str | None,
-    tmdb_id: int,
-    error_type: str,
-    error_msg: str,
-) -> None:
-    entry = {
-        "title_id": title_id,
-        "imdb_id": imdb_id,
-        "tmdb_id": tmdb_id,
-        "error_type": error_type,
-        "error_message": error_msg[:300],
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
-    with open(FAILURE_LOG_PATH, "a", encoding="utf-8") as f:
-        f.write(json.dumps(entry) + "\n")
 
 
 # Resolve a Letterboxd film page, trying the IMDb slug first (it resolves TV /
@@ -200,8 +178,9 @@ async def get_letterboxd_data(
             return result
 
         except Exception as e:
-            log_failure(title_id, imdb_id, tmdb_id, type(e).__name__, str(e))
-            return None
+            # Recorded in title_letterboxd_stats.letterboxd_error by the main
+            # loop via crud.mark_letterboxd_error.
+            return {"title_id": title_id, "_error": f"{type(e).__name__}: {e}"[:300]}
 
 
 async def main():
@@ -241,11 +220,12 @@ async def main():
     try:
         for coro in asyncio.as_completed(tasks):
             result = await coro
-            if result is not None:
+            if result.get("_error"):
+                crud.mark_letterboxd_error(conn, result["title_id"], result["_error"])
+                fail_count += 1
+            else:
                 crud.upsert_letterboxd_stats(conn, result)
                 success_count += 1
-            else:
-                fail_count += 1
 
             done = success_count + fail_count
             if done % PROGRESS_EVERY == 0:
@@ -266,7 +246,7 @@ async def main():
         f"{success_count} succeeded, {fail_count} failed out of {total}."
     )
     if fail_count:
-        print(f"Failure details: {FAILURE_LOG_PATH}")
+        print("Failures recorded in SQLite: title_letterboxd_stats.letterboxd_error.")
 
 
 if __name__ == "__main__":

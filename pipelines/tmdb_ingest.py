@@ -137,6 +137,10 @@ def run_sweep(content_type, params, source_label, date_gte=None):
                         tmdb_id, parsed = fut.result()
                     except Exception as exc:
                         page_failed += 1
+                        crud.mark_tmdb_ingest_error(
+                            conn, tmdb_id, content_type, source_label,
+                            f"{type(exc).__name__}: {exc}"[:300],
+                        )
                         print(
                             f"    ! failed tmdb_id={tmdb_id}: {type(exc).__name__}: {exc}"
                         )
