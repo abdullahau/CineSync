@@ -27,6 +27,22 @@ CREATE TABLE titles (
 -- Rotten Tomato links/url slug - extracted from Wikidata?
 -- Create a separate table for detailed plot from Wikipedia?
 
+-- TMDB per-title ingest failures. Discovery yields a tmdb_id, but the details
+-- fetch/parse can fail BEFORE a titles row exists (and titles.name is NOT NULL,
+-- so a failed title can't be stubbed there) -- so the error lands here, keyed by
+-- the TMDB id + type rather than title_id. A later successful ingest of the same
+-- id clears its row (upsert_tmdb_title deletes it), so a lingering row == "still
+-- failing to ingest". This is the SQLite home for what would otherwise be a
+-- TMDB-side failure log.
+CREATE TABLE tmdb_ingest_errors (
+    tmdb_id      INTEGER NOT NULL,
+    content_type TEXT NOT NULL CHECK (content_type IN ('movie','tv')),
+    source       TEXT,           -- sweep source_label active when it failed
+    error        TEXT NOT NULL,
+    fetched_at   TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (tmdb_id, content_type)
+);
+
 -- Long-form plot text, 1:1 with titles. Written by IMDb scraper + Wikipedia.
 CREATE TABLE title_plots (
     title_id             TEXT NOT NULL PRIMARY KEY REFERENCES titles(title_id),
@@ -123,7 +139,10 @@ CREATE TABLE title_letterboxd_stats (
     top_rank INTEGER CHECK (
         top_rank IS NULL OR
         (top_rank BETWEEN 1 AND 500)
-    )
+    ),
+
+    letterboxd_fetched_at TEXT,  -- NULL until the Letterboxd scraper has run for this title
+    letterboxd_error      TEXT   -- NULL on success; set only on fetch failure (retryable)
 );
 
 -- PLACEHOLDER: populated later from the IMDb ratings HTML page.
@@ -132,6 +151,9 @@ CREATE TABLE title_imdb_rating_dist (
     votes_1  INTEGER, votes_2  INTEGER, votes_3  INTEGER, votes_4  INTEGER, votes_5 INTEGER,
     votes_6  INTEGER, votes_7  INTEGER, votes_8  INTEGER, votes_9  INTEGER, votes_10 INTEGER,
     total_votes INTEGER,   -- checksum against title_scores.sample_size for imdb_rating
+    histogram_error TEXT,  -- NULL on success; set only on histogram fetch failure. Kept
+                           -- SEPARATE from title_plots.imdb_error (storyline enrichment):
+                           -- the histogram is an independent sub-fetch of the same batch.
     fetched_at  TEXT DEFAULT (datetime('now'))
 );
 
